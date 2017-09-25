@@ -1,4 +1,7 @@
 numpy
 matplotlib
+tensorflow
 scipy
 seaborn
+keras
+tdqm

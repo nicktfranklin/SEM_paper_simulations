@@ -3,6 +3,9 @@ import tensorflow as tf
 import edward as ed
 from scipy.stats import multivariate_normal
 from scipy.misc import logsumexp
+from keras.models import Sequential
+from keras.layers import Dense, Activation, SimpleRNN
+from tqdm import tnrange
 
 
 class EventModel(object):
@@ -11,11 +14,92 @@ class EventModel(object):
 
         self.D = D
 
+    def update(self, X, Y):
+        pass
+
     def predict(self, X):
         return np.copy(X)
 
     def log_likelihood(self, X, Y, Sigma):
         return multivariate_normal.pdf(X - Y, mean=np.zeros(self.D), cov=Sigma)
+
+
+class KerasLDS(EventModel):
+
+
+    def __init__(self, D):
+        EventModel.__init__(self, D)
+        self.x_train = np.zeros((0, self.D))  # initialize empty arrays
+        self.y_train = np.zeros((0, self.D))
+        self.is_initialized = False
+
+    def _estimate(self):
+
+        N, D = self.x_train.shape
+
+        self.model = Sequential([
+            Dense(D, input_shape=(D, )),
+            Activation('linear')
+        ])
+        # sgd = optimizers.SGD(lr=0.01, momentum=0.0, decay=0.0, nesterov=False)
+        self.model.compile(optimizer='sgd', loss='mean_squared_error')
+
+        self.model.fit(self.x_train, self.y_train, verbose=0)
+
+    def update(self, X, Y, estimate=True):
+        self.x_train = np.concatenate([self.x_train, np.reshape(X, newshape=(1, 2))])
+        self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(1, 2))])
+
+        if estimate:
+            self._estimate()
+            self.is_initialized = True
+
+    def predict(self, X):
+        if self.is_initialized:
+            return self.model.predict(np.reshape(X, newshape=(1, self.D)))
+        else:
+            return X
+
+    def log_likelihood(self, X, Y, Sigma):
+
+        Y_hat = self.predict(X)
+        LL = np.log(multivariate_normal.pdf(Y - Y_hat, mean=np.zeros(self.D), cov=Sigma))
+
+        return LL
+
+
+class KerasMultiLayerNN(KerasLDS):
+
+    def _estimate(self):
+
+        N, D = self.x_train.shape
+
+        self.model = Sequential()
+        self.model.add(Dense(D*D, input_shape=(D,)))
+        self.model.add(Dense(D*D))
+        self.model.add(Dense(D))
+
+        # sgd = optimizers.SGD(lr=0.01, momentum=0.0, decay=0.0, nesterov=False)
+        self.model.compile(optimizer='sgd', loss='mean_squared_error')
+
+        self.model.fit(self.x_train, self.y_train, verbose=0)
+
+
+class KerasSRN(KerasLDS):
+
+    def _estimate(self):
+
+        N, D = self.x_train.shape
+
+        self.model = Sequential()
+        self.model.add(SimpleRNN(D, activation=None, input_dim=D))
+        # self.model.add(SimpleRNN(D, input_shape=(D,)))
+        # self.model.add(Dense(D))
+
+        # sgd = optimizers.SGD(lr=0.01, momentum=0.0, decay=0.0, nesterov=False)
+        self.model.compile(optimizer='sgd', loss='mean_squared_error')
+
+        self.model.fit(self.x_train, self.y_train, verbose=0)
 
 
 class EdwardLinearDynamicSystem(EventModel):
@@ -39,6 +123,7 @@ class EdwardLinearDynamicSystem(EventModel):
         self.n_samples = n_samples
         self.w_samples = np.reshape(np.eye(self.D), (1, self.D, self.D))
         self.b_samples = np.zeros((1, self.D))
+        self.initialized = False
 
     def _initialize_model(self, N):
         """
@@ -51,11 +136,11 @@ class EdwardLinearDynamicSystem(EventModel):
         self.W_0 = ed.models.Normal(loc=tf.zeros([self.D, self.D]), scale=tf.ones([self.D, self.D]), name="W_0")
         self.b_0 = ed.models.Normal(loc=tf.zeros(self.D), scale=tf.ones(self.D), name="b_0")
 
-        self.X = tf.placeholder(tf.float32, [N, self.D], name="X")
+        self.X = tf.placeholder(tf.float32, [None, self.D], name="X")
 
         self.y = ed.models.MultivariateNormalDiag(
             loc=tf.matmul(self.X, self.W_0) + self.b_0,
-            scale_diag=0.1 * tf.ones(self.D),
+            scale_diag=tf.ones(self.D),
             name="y"
         )
 
@@ -71,11 +156,13 @@ class EdwardLinearDynamicSystem(EventModel):
         ----------
 
         x_train: NxD array
-            N examplars of D-dimensional states
+            N exemplars of D-dimensional states
 
         y_train: NxD array
-            N examplars of D-dimensional sucessor states
+            N exemplars of D-dimensional successor states
 
+        n_samples: int
+            number of samples to use in inference
         """
         inference = ed.KLqp({self.W_0: self.qW_0, self.b_0: self.qb},
                             data={self.X: x_train, self.y: y_train})
@@ -102,7 +189,9 @@ class EdwardLinearDynamicSystem(EventModel):
         if estimate:
             # initialize and train the edward model
             N, D = self.x_train.shape
-            self._initialize_model(N)
+            if not self.initialized:
+                self._initialize_model(N)
+                self.initialized = True
             self._train(self.x_train, self.y_train)
 
             # cache parameter samples for prediction
@@ -145,14 +234,6 @@ class EdwardLinearDynamicSystem(EventModel):
             # print multivariate_normal.pdf(Y - Y_hat[ii, :], mean=np.zeros(self.D), cov=Sigma)
 
             LL += np.log(multivariate_normal.pdf(Y - Y_hat[ii, :], mean=np.zeros(self.D), cov=Sigma))
-        # print LL
-        #
-        # if np.isinf(abs(LL)):
-        #     for ii in range(n):
-        #         ll = np.log(multivariate_normal.pdf(Y - Y_hat[ii, :], mean=np.zeros(self.D), cov=Sigma))
-        #         print ll
-        #         if np.isinf(abs(ll)):
-        #             print Y, Y_hat[ii, :]
 
         return LL / n
 
@@ -180,9 +261,53 @@ class EdwardLinearDynamicSystem(EventModel):
         return np.reshape(Y_hat, newshape=(n, 1, self.D))
 
 
-# class EdwardLinearDynamicSystem2(EventModel):
-#
-#     def _initialize_model(self, N):
+class EdwardLinearDynamicSystem2(EdwardLinearDynamicSystem):
+
+    def _train(self, x_train, y_train, n_samples=3):
+        """
+        Parameters
+        ----------
+
+        x_train: NxD array
+            N exemplars of D-dimensional states
+
+        y_train: NxD array
+            N exemplars of D-dimensional successor states
+
+        n_samples: int
+            number of samples to use in inference
+        """
+
+        N, D = self.x_train.shape
+
+        self.W_0 = ed.models.Normal(loc=tf.zeros([self.D, self.D]), scale=tf.ones([self.D, self.D]), name="W_0")
+        self.b_0 = ed.models.Normal(loc=tf.zeros(self.D), scale=tf.ones(self.D), name="b_0")
+
+        self.X = tf.placeholder(tf.float32, [N, self.D], name="X")
+
+        self.y = ed.models.MultivariateNormalDiag(
+            loc=tf.matmul(self.X, self.W_0) + self.b_0,
+            scale_diag=0.1 * tf.ones(self.D),
+            name="y"
+        )
+
+        qW_0 = ed.models.PointMass()
+
+        # self.qW_0 = ed.models.Normal(loc=tf.Variable(tf.random_normal([self.D, self.D]), name="loc"),
+        #                              scale=tf.nn.softplus(
+        #                                  tf.Variable(tf.random_normal([self.D, self.D]), name="scale")))
+        #
+        # self.qb = ed.models.Normal(loc=tf.Variable(tf.random_normal([self.D])),
+        #                            scale=tf.nn.softplus(tf.Variable(tf.random_normal([self.D]))))
+
+
+        inference = ed.MAP({self.W_0: self.qW_0, self.b_0: self.qb},
+                            data={self.X: x_train, self.y: y_train})
+        # inference.run(n_samples=5, n_iter=1000)
+        inference.run(n_samples=n_samples)
+
+
+
 
 
 
@@ -338,7 +463,7 @@ class SEM(object):
         x_prev = np.zeros(D)  # need a starting location as is sequential model
         post = np.zeros((N, K))
 
-        for n in range(N):
+        for n in tnrange(N):
             # calculate sCRP prior
             prior = C.copy()
             idx = len(np.nonzero(C)[0])  # get number of visited clusters
