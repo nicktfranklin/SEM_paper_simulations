@@ -6,6 +6,7 @@ from scipy.misc import logsumexp
 from keras.models import Sequential
 from keras.layers import Dense, Activation, SimpleRNN
 from tqdm import tnrange
+from tensorflow.contrib import slim
 
 
 class EventModel(object):
@@ -261,9 +262,30 @@ class EdwardLinearDynamicSystem(EventModel):
         return np.reshape(Y_hat, newshape=(n, 1, self.D))
 
 
-class EdwardLinearDynamicSystem2(EdwardLinearDynamicSystem):
+class EdwardNN(EventModel):
+    def __init__(self, D, n_samples=100):
+        """
+        Parameters:
+        -----------
 
-    def _train(self, x_train, y_train, n_samples=3):
+        D: int
+            dimensions of the data set
+
+        n_samples: int
+            number of samples to draw of the posterior
+
+        """
+        EventModel.__init__(self, D)
+        self.x_train = np.zeros((0, self.D))  # initialize empty arrays
+        self.y_train = np.zeros((0, self.D))
+
+        # initialize samples, for untrained (new) models, predict X'_hat = X
+        self.n_samples = n_samples
+        self.w_samples = np.reshape(np.eye(self.D), (1, self.D, self.D))
+        self.b_samples = np.zeros((1, self.D))
+        self.isInitialized = False
+
+    def _estimate(self, x_train, y_train):
         """
         Parameters
         ----------
@@ -277,38 +299,113 @@ class EdwardLinearDynamicSystem2(EdwardLinearDynamicSystem):
         n_samples: int
             number of samples to use in inference
         """
+        N, D = x_train.shape
 
-        N, D = self.x_train.shape
+        # Define the neural network
+        self.X_ph = tf.placeholder(tf.float32, [None, D])
 
-        self.W_0 = ed.models.Normal(loc=tf.zeros([self.D, self.D]), scale=tf.ones([self.D, self.D]), name="W_0")
-        self.b_0 = ed.models.Normal(loc=tf.zeros(self.D), scale=tf.ones(self.D), name="b_0")
+        def neural_network(X):
+            """ Neural network with one hidden layer, outputs location and scale parameter
+            for the event model:
+            mean, location = neural_network(X)
+            """
+            hidden = slim.fully_connected(X, D * D, activation_fn=None)
+            loc = slim.fully_connected(hidden, D, activation_fn=None)
+            scale = slim.fully_connected(hidden, D, activation_fn=tf.nn.softplus)
+            return loc, scale
 
-        self.X = tf.placeholder(tf.float32, [N, self.D], name="X")
+        loc, scale = neural_network(self.X_ph)
+        self.Y = ed.models.MultivariateNormalDiag(loc=loc, scale_diag=scale)
 
-        self.y = ed.models.MultivariateNormalDiag(
-            loc=tf.matmul(self.X, self.W_0) + self.b_0,
-            scale_diag=0.1 * tf.ones(self.D),
-            name="y"
-        )
+        # inference = ed.KLqp(data={self.X_ph: x_train, self.Y: y_train})  # variational inference
+        inference = ed.MAP(data={self.X_ph: x_train, self.Y: y_train})  # MAP approximation
+        inference.run()
 
-        qW_0 = ed.models.PointMass()
+        self.sess = ed.get_session()
 
-        # self.qW_0 = ed.models.Normal(loc=tf.Variable(tf.random_normal([self.D, self.D]), name="loc"),
-        #                              scale=tf.nn.softplus(
-        #                                  tf.Variable(tf.random_normal([self.D, self.D]), name="scale")))
-        #
-        # self.qb = ed.models.Normal(loc=tf.Variable(tf.random_normal([self.D])),
-        #                            scale=tf.nn.softplus(tf.Variable(tf.random_normal([self.D]))))
+    def update(self, X, Y, estimate=True):
+        """
+        Parameters
+        ----------
 
+        X: np.array, length D
+            observed state vector
 
-        inference = ed.MAP({self.W_0: self.qW_0, self.b_0: self.qb},
-                            data={self.X: x_train, self.y: y_train})
-        # inference.run(n_samples=5, n_iter=1000)
-        inference.run(n_samples=n_samples)
+        Y: np.array, length D
+            observed successor state vector
 
+        estimate: boolean
+            estimate the network parameters?
+        """
+        self.x_train = np.concatenate([self.x_train, np.reshape(X, newshape=(1, 2))])
+        self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(1, 2))])
 
+        if estimate:
+            # initialize and train the edward model
 
+            self._estimate(self.x_train, self.y_train)
+            self.isInitialized = True
 
+    def log_likelihood(self, X, Y, Sigma):
+        """
+        Calculate a normal likelihood
+
+        Parameters
+        ----------
+        X: np.array length D
+            starting state vector
+
+        Y: np.array length D
+            sucessor state vector
+
+        Sigma: DxD array
+            covariance matrix for normal likelihood
+
+        Returns
+        -------
+
+        ll: float
+            log likelihood
+        """
+        Y_hat = self.predict(X)
+        LL = np.log(multivariate_normal.pdf(Y - Y_hat, mean=np.zeros(self.D), cov=Sigma))
+
+        return LL
+
+    def predict(self, X):
+        """
+        Parameters
+        ----------
+
+        X: np.array, length D
+            state vector
+
+        Returns
+        -------
+
+        Y_hat: np.array, n_samples x D
+            sample of predicted successors states
+        """
+        if np.array(X).ndim == 1:
+            N = 1
+            D = np.shape(X)[0]
+        else:
+            N, D = np.shape(X)
+
+        if self.isInitialized:
+            n = self.w_samples.shape[0]  # number of samples stored
+            Y_hat = self.sess.run(self.Y, feed_dict={self.X_ph: np.reshape(X, newshape=(N, D))})
+
+            return np.reshape(Y_hat, newshape=(n, 1, self.D))
+        else:
+            return X
+
+    def close_session(self):
+        """
+        Close out the tensorflow sessions
+        :return:
+        """
+        self.sess.close()
 
 
 class LinearDynamicSystem(EventModel):
@@ -499,5 +596,10 @@ class SEM(object):
             event_models[k].update(x_prev, X[n, :])  # update event model
 
             x_prev = X[0, :].copy()  # store the current vector for next trial
+        #
+        # # close out any tensorflow sessions
+        # for model in event_models.itervalues():
+        #     if hasattr(model, 'close_session'):
+        #         model.close_session()
 
         return post
