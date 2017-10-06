@@ -5,6 +5,7 @@ from scipy.stats import multivariate_normal
 from scipy.misc import logsumexp
 from keras.models import Sequential
 from keras.layers import Dense, Activation, SimpleRNN
+from keras import optimizers
 from tqdm import tnrange
 from tensorflow.contrib import slim, rnn
 
@@ -48,8 +49,8 @@ class KerasLDS(EventModel):
         self.model.fit(self.x_train, self.y_train, verbose=0)
 
     def update(self, X, Y, estimate=True):
-        self.x_train = np.concatenate([self.x_train, np.reshape(X, newshape=(1, 2))])
-        self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(1, 2))])
+        self.x_train = np.concatenate([self.x_train, np.reshape(X, newshape=(1, self.D))])
+        self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(1, self.D))])
 
         if estimate:
             self._estimate()
@@ -76,12 +77,13 @@ class KerasMultiLayerNN(KerasLDS):
         N, D = self.x_train.shape
 
         self.model = Sequential()
-        self.model.add(Dense(D*D, input_shape=(D,)))
-        self.model.add(Dense(D*D))
-        self.model.add(Dense(D))
+        self.model.add(Dense(D*D, input_shape=(D,), activation='tanh'))
+        # self.model.add(Dense(D*D, activation='tanh'))
+        self.model.add(Dense(D, activation='linear'))
 
         # sgd = optimizers.SGD(lr=0.01, momentum=0.0, decay=0.0, nesterov=False)
-        self.model.compile(optimizer='sgd', loss='mean_squared_error')
+        self.model.compile(optimizer=optimizers.SGD(lr=0.01, momentum=0.9, nesterov=True),
+                           loss='mean_squared_error')
 
         self.model.fit(self.x_train, self.y_train, verbose=0)
 
