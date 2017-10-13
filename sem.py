@@ -10,6 +10,40 @@ from tqdm import tnrange
 from tensorflow.contrib import slim, rnn
 
 
+def unroll_data(X, t=1):
+    """
+    unrolls a data_set for with time-steps, truncated for t time-steps
+    appends t-1 D-dimensional zero vectors at the beginning.
+
+    Parameters:
+        X: array, shape (N, D) or shape (D,)
+
+        t: int
+            time-steps to truncate the unroll
+
+    output
+    ------
+
+        X_unrolled: array, shape (N-1, t, D)
+
+    """
+    if np.ndim(X) == 2:
+        N, D = np.shape(X)
+    elif np.ndim(X):
+        N, D = 1, np.shape(X)[0]
+        X = np.reshape(X, (1, D))
+
+    X_unrolled = np.zeros((N, t, D))
+
+    # append a t-1 blank (zero) input patterns to the beginning
+    data_set = np.concatenate([np.zeros((t - 1, D)), X])
+
+    for ii in range(N):
+        X_unrolled[ii, :, :] = data_set[ii: ii + t, :]
+
+    return X_unrolled
+
+
 class EventModel(object):
 
     def __init__(self, D):
@@ -90,19 +124,29 @@ class KerasMultiLayerNN(KerasLDS):
 
 class KerasSRN(KerasLDS):
 
+    def __init__(self, D, t=5):
+        KerasLDS.__init__(self, D)
+        self.t = t
+
     def _estimate(self):
 
-        N, D = self.x_train.shape
+        x_train0 = unroll_data(self.x_train, self.t)
 
         self.model = Sequential()
-        self.model.add(SimpleRNN(D, activation=None, input_dim=D))
-        # self.model.add(SimpleRNN(D, input_shape=(D,)))
-        # self.model.add(Dense(D))
+        self.model.add(SimpleRNN(self.D, input_shape=(self.t, self.D), activation=None))
+        self.model.add(Dense(self.D*self.D, activation='tanh'))
+        self.model.add(Dense(self.D, activation=None))
 
-        # sgd = optimizers.SGD(lr=0.01, momentum=0.0, decay=0.0, nesterov=False)
-        self.model.compile(optimizer='sgd', loss='mean_squared_error')
+        self.model.compile(optimizer=optimizers.SGD(lr=0.01, momentum=0.9, nesterov=True),
+                           loss='mean_squared_error')
+        self.model.fit(x_train0, self.y_train, verbose=0)
 
-        self.model.fit(self.x_train, self.y_train, verbose=0)
+    def predict(self, X):
+        if self.is_initialized:
+            x_test0 = unroll_data(X, self.t)
+            return self.model.predict(x_test0)
+        else:
+            return X
 
 
 class EdwardLDS(EventModel):
