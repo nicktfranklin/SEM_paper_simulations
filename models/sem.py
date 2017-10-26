@@ -51,7 +51,7 @@ class SEM(object):
 
         Return
         ------
-        post: N by K array of posterior probabilites
+        post: N by K array of posterior probabilities
         """
 
         [N, D] = np.shape(X)

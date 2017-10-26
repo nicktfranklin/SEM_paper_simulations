@@ -1,0 +1,10 @@
+name: sem
+dependencies:
+  - python=2.7
+  - anaconda
+  - seaborn
+  - pip:
+      - tqdm
+      - tensorflow
+      - keras
+      - edward
