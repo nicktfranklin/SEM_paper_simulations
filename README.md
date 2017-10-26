@@ -10,9 +10,9 @@ The main code is listed in the `models` module:
     
 There are a few prepackaged demonstrations in Jupyter notebooks. These have been pre-run and can be opened on github
 without installation:
-* `HRR demonstration.ipynb`
-* `Segmentation Demo -- Toy Data.ipynb`: Simulations of the SEM model segmenting 2D data sets
-* `Segmentation Demo -- Motion Capture Data.ipynb`: Simulations of the SEM model on the 3d motion capture data. 
+* `Demo: HRR.ipynb`
+* `Demo: Toy Data.ipynb`: Simulations of the SEM model segmenting 2D data sets
+* `Demo: Motion Capture Data.ipynb`: Simulations of the SEM model on the 3d motion capture data. 
 
 
 
