@@ -197,19 +197,23 @@ class KerasSimpleRNN(KerasLDS):
 
 class KerasSRN_batch(KerasLDS):
 
-    def __init__(self, D, t=5, sgd_kwargs=None, n_batch=100, aug_noise=0.01):
-        KerasLDS.__init__(self, D, sgd_kwargs=None)
+    def __init__(self, D, t=5, n_hidden1=10, n_hidden2=10, hidden_act1=None, hidden_act2='tanh', sgd_kwargs=None,
+                 n_batch=100, aug_noise=0.01):
+        KerasLDS.__init__(self, D, sgd_kwargs=sgd_kwargs)
         self.t = t
         self.n_batch = n_batch
         self.noise = aug_noise
+        self.n_hidden1 = n_hidden1
+        self.n_hidden2 = n_hidden2
+        self.hidden_act1 = hidden_act1
+        self.hidden_act2 = hidden_act2
 
     def _estimate(self):
 
         self.model = Sequential()
-        self.model.add(SimpleRNN(self.D, input_shape=(self.t, self.D), activation=None))
-        self.model.add(Dense(self.D*self.D, activation='tanh'))
+        self.model.add(SimpleRNN(self.n_hidden1, input_shape=(self.t, self.n_hidden1), activation=self.hidden_act1))
+        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2))
         self.model.add(Dense(self.D, activation=None))
-
         self.model.compile(**self.compile_opts)
 
 
