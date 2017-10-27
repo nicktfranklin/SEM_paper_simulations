@@ -40,7 +40,7 @@ class SEM(object):
         self.f_class = f_class
         self.f_opts = f_opts
 
-    def run(self, X, K=None):
+    def run(self, X, K=None, return_predictions=False):
         """
         Parameters
         ----------
@@ -61,8 +61,10 @@ class SEM(object):
         if K is None:
             K = N
 
+        if return_predictions:
+            y = np.zeros(np.shape(X))
+
         C = np.zeros(K)  # running count of the clustering process
-        prior = C.copy()
 
         event_models = dict()  # initialize an empty event model space
 
@@ -104,7 +106,7 @@ class SEM(object):
             C[k] += 1  # update counts
             event_models[k].update(x_prev, X[n, :])  # update event model
 
-            x_prev = X[0, :].copy()  # store the current vector for next trial
+            x_prev = X[n, :].copy()  # store the current vector for next trial
 
         # after all of the training, close the models!
         for m in event_models.itervalues():
