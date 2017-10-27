@@ -1,6 +1,22 @@
 import numpy as np
 from scipy.misc import logsumexp
 from tqdm import tnrange
+from scipy.stats import multivariate_normal as mvnormal
+
+def get_training_contin_clust(posterior, current_time, horizon):
+    if (horizon > 1) & (current_time >= 1):
+        # get the last t vectors within the current cluster...
+        h0 = np.min([current_time, horizon])
+        ks = np.argmax(posterior[current_time-h0:current_time+1, :], axis=1)
+        ks = (ks == ks[-1]).tolist()
+        t0 = 0
+        while ks.pop():
+            t0 += 1
+            if not ks:
+                break
+    else:
+        t0 = 1
+    return t0
 
 
 class SEM(object):
@@ -9,7 +25,7 @@ class SEM(object):
     in python. More documentation to come!
     """
 
-    def __init__(self, lmda=1., alfa=10.0, beta=0.1, f_class=None, f_opts=None):
+    def __init__(self, lmda=1., alfa=10.0, beta=0.1, t=0, f_class=None, f_opts=None):
         """
         Parameters
         ----------
@@ -33,6 +49,7 @@ class SEM(object):
         self.lmda = lmda
         self.alfa = alfa
         self.beta = beta
+        self.t = t  # used by recursive models
 
         if f_class is None:
             raise ValueError("f_model must be specified!")
@@ -68,10 +85,14 @@ class SEM(object):
 
         event_models = dict()  # initialize an empty event model space
 
-        x_prev = np.zeros(D)  # need a starting location as is sequential model
+        X_prev = np.zeros(D)  # need a starting location as is sequential model
+        # X_curr = X[0, :]
         post = np.zeros((N, K))
 
         for n in tnrange(N):
+            # print "New Trail"
+            X_curr = X[n, :].copy()
+
             # calculate sCRP prior
             prior = C.copy()
             idx = len(np.nonzero(C)[0])  # get number of visited clusters
@@ -95,18 +116,37 @@ class SEM(object):
 
                 # get the log likelihood for each event model
                 model = event_models[k]
-                lik[k] = model.log_likelihood(x_prev, X[n, :], Sigma)
+
+                # lik[k] = model.log_likelihood(X_prev, X_curr, Sigma)
+                Y_hat = model.predict(X_prev)
+                # print X_curr.shape
+                # print Y_hat.shape
+                lik[k] = np.log(mvnormal.pdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma))
 
             # posterior
             p = np.log(prior[:len(active)]) + lik
             post[n, :len(active)] = np.exp(p - logsumexp(p))
 
             # update
-            k = np.argmax(post[n, :])  # MAP cluster
-            C[k] += 1  # update counts
-            event_models[k].update(x_prev, X[n, :])  # update event model
 
-            x_prev = X[n, :].copy()  # store the current vector for next trial
+            k = np.argmax(post[n, :])  # MAP cluster
+
+            C[k] += 1  # update counts
+            if (X_prev.ndim > 1) & (X_prev.shape[0] > 1):
+                event_models[k].update(X_prev[-1, :], X_curr)  # update event model
+            else:
+                event_models[k].update(X_prev, X_curr)  # update event model
+
+            t0 = get_training_contin_clust(post, n, self.t) # get the time horizon for recursion
+            # print n, self.t, t0
+            # print max([0, n-t0+1]), n+1
+            # print range(max([0, n-t0+1]), n+1)
+
+            X_prev = X[max([0, n-t0+1]):n+1, :]  # store the current vector for next trial
+            # print X_prev.shape
+            # # update the current scene vector
+            # t0 = get_training_contin_clust(post, n+1, self.t)
+            # X_curr = X[max([0, n+1-t0]):n+2, :]
 
         # after all of the training, close the models!
         for m in event_models.itervalues():

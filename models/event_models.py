@@ -7,7 +7,6 @@ from keras import optimizers
 from scipy.stats import multivariate_normal
 
 
-
 class EventModel(object):
 
     """ this is the base clase of the event model """
@@ -43,32 +42,67 @@ class EventModel(object):
         """
         return np.copy(X)
 
-    def log_likelihood(self, X, Y, Sigma):
+    def close(self):
+        pass
+
+
+class LinearDynamicSystem(EventModel):
+    def __init__(self, D, eta=0.01):
         """
         Parameters
         ----------
-        X: NxD array-like
-            observed inputs
+        D: int
+            dimensions of the vector space of interest
 
-        y: NxD array-like
-            observed outputs
+        eta: float
+            learning rate
+        """
+        EventModel.__init__(self, D)
+        self.beta = np.zeros(D).flatten()
+        self.W = np.eye(D).flatten()
+        self.eta = eta
 
-        Sigma: float
-            variance of diagonal normal distribution
-
+    def predict(self, X):
+        """
+        Parameters
+        ----------
+        X: np.array of length D
+            vector at time t
 
         Returns
         -------
-
-        LL: float
-            log likelihood of observed data N(Y|X, sigma * I)
-
-
+        Y_hat: np.array of length D
+            prediction of vector at time t+1
         """
-        return np.log(multivariate_normal.pdf(X - Y, mean=np.zeros(self.D), cov=Sigma))
+        Y_hat = self.beta + np.matmul(X, np.reshape(self.W, (self.D, self.D)))
+        return Y_hat
 
-    def close(self):
-        pass
+
+    def update(self, X, Y):
+        """
+        Parameters
+        ----------
+
+        X: np.array, length D
+            observed state vector
+
+        Y: np.array, length D
+            observed sucessor state vector
+        """
+        Y_hat = np.reshape(self.predict(X), (Y.shape[0]))
+
+        # needed for updating logic
+        dXdb = np.eye(self.D)
+        dXdW = np.tile((np.tile(X, (1, self.D))), (self.D, 1))
+        g = np.concatenate([dXdb, dXdW], axis=1)
+
+        # vectorize the parameters
+        theta = np.concatenate([self.beta, self.W.flatten()])
+        theta += self.eta * np.matmul(Y - Y_hat, g)
+
+        # store the updated parameters
+        self.beta = theta[:self.D]
+        self.W = theta[self.D:]
 
 
 class KerasLDS(EventModel):
@@ -130,38 +164,10 @@ class KerasLDS(EventModel):
         else:
             return X
 
-    def log_likelihood(self, X, Y, Sigma):
-
-        """
-        Parameters
-        ----------
-        X: NxD array-like
-            observed inputs
-
-        y: NxD array-like
-            observed outputs
-
-        Sigma: float
-            variance of diagonal normal distribution
-
-
-        Returns
-        -------
-
-        LL: float
-            log likelihood of observed data N(Y|X, sigma * I)
-
-
-        """
-
-        Y_hat = self.predict(X)
-        LL = np.log(multivariate_normal.pdf(Y - Y_hat, mean=np.zeros(self.D), cov=Sigma))
-
-        return LL
 
 class KerasMultiLayerNN(KerasLDS):
 
-    def __init__(self, D, n_hidden=None, hidden_act = 'tanh', sgd_kwargs=None):
+    def __init__(self, D, n_hidden=None, hidden_act='tanh', sgd_kwargs=None):
         KerasLDS.__init__(self, D, sgd_kwargs=sgd_kwargs)
         if n_hidden is None:
             n_hidden = D
@@ -205,9 +211,15 @@ class KerasRNN(KerasLDS):
     def predict(self, X):
         if self.is_initialized:
             x_test0 = unroll_data(X, self.t)
-            return self.model.predict(x_test0)
+            y_hat = self.model.predict(x_test0)
+            if y_hat.ndim == 1:
+                return y_hat
+            return y_hat[-1, :]
         else:
-            return X
+            if X.ndim == 1:
+                return X
+            else:
+                return X[-1, :]
 
 
 class KerasSimpleRNN(KerasLDS):
@@ -232,10 +244,15 @@ class KerasSimpleRNN(KerasLDS):
     def predict(self, X):
         if self.is_initialized:
             x_test0 = unroll_data(X, self.t)
-            return self.model.predict(x_test0)
+            y_hat = self.model.predict(x_test0)
+            if y_hat.ndim == 1:
+                return y_hat
+            return y_hat[-1, :]
         else:
-            return X
-
+            if X.ndim == 1:
+                return X
+            else:
+                return X[-1, :]
 
 class KerasSRN_batch(KerasLDS):
 
@@ -258,7 +275,6 @@ class KerasSRN_batch(KerasLDS):
         self.model.add(Dense(self.D, activation=None))
         self.model.compile(**self.compile_opts)
 
-
         N, D = np.shape(self.x_train)
         for _ in range(self.n_batch):
             noise = np.reshape(np.random.randn(N, D) * self.noise, np.shape(self.x_train))
@@ -269,9 +285,15 @@ class KerasSRN_batch(KerasLDS):
     def predict(self, X):
         if self.is_initialized:
             x_test0 = unroll_data(X, self.t)
-            return self.model.predict(x_test0)
+            y_hat = self.model.predict(x_test0)
+            if y_hat.ndim == 1:
+                return y_hat
+            return y_hat[-1, :]
         else:
-            return X
+            if X.ndim == 1:
+                return X
+            else:
+                return X[-1, :]
 
 
 
