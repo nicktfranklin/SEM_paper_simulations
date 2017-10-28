@@ -129,7 +129,7 @@ class EdwardLDS(EventModel):
             log likelihood
         """
 
-        Y_hat = self.predict(X)
+        Y_hat = self.predict_next(X)
 
         n = Y_hat.shape[0]  # number of samples
         LL = 0  # initialize log likelihood at zero
@@ -141,7 +141,7 @@ class EdwardLDS(EventModel):
 
         return LL / n
 
-    def predict(self, X):
+    def predict_next(self, X):
         """
         Parameters
         ----------
@@ -267,12 +267,12 @@ class EdwardModel(EventModel):
         ll: float
             log likelihood
         """
-        Y_hat = self.predict(X)
+        Y_hat = self.predict_next(X)
         LL = np.log(multivariate_normal.pdf(Y - Y_hat, mean=np.zeros(self.D), cov=Sigma))
 
         return LL
 
-    def predict(self, X):
+    def predict_next(self, X):
         """
         Parameters
         ----------
@@ -510,7 +510,7 @@ class LinearDynamicSystem(EventModel):
         self.W = np.eye(D).flatten()
         self.eta = eta
 
-    def predict(self, X):
+    def predict_next(self, X):
         """
         Parameters
         ----------
@@ -547,7 +547,7 @@ class LinearDynamicSystem(EventModel):
             log likelihood
         """
 
-        Y_hat = self.predict(X)
+        Y_hat = self.predict_next(X)
         return np.log(multivariate_normal.pdf(Y - Y_hat, mean=np.zeros(self.D), cov=Sigma))
 
     def update(self, X, Y):
@@ -561,7 +561,7 @@ class LinearDynamicSystem(EventModel):
         Y: np.array, length D
             observed sucessor state vector
         """
-        Y_hat = self.predict(X)
+        Y_hat = self.predict_next(X)
 
         # needed for updating logic
         dXdb = np.eye(self.D)

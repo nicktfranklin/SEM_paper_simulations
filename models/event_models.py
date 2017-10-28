@@ -29,7 +29,7 @@ class EventModel(object):
         """
         pass
 
-    def predict(self, X):
+    def predict_next(self, X):
         """
         Parameters
         ----------
@@ -62,7 +62,7 @@ class LinearDynamicSystem(EventModel):
         self.W = np.eye(D).flatten()
         self.eta = eta
 
-    def predict(self, X):
+    def predict_next(self, X):
         """
         Parameters
         ----------
@@ -89,7 +89,7 @@ class LinearDynamicSystem(EventModel):
         Y: np.array, length D
             observed sucessor state vector
         """
-        Y_hat = np.reshape(self.predict(X), (Y.shape[0]))
+        Y_hat = np.reshape(self.predict_next(X), (Y.shape[0]))
 
         # needed for updating logic
         dXdb = np.eye(self.D)
@@ -143,7 +143,7 @@ class KerasLDS(EventModel):
             self._estimate()
             self.is_initialized = True
 
-    def predict(self, X):
+    def predict_next(self, X):
         """
         Parameters
         ----------
@@ -208,7 +208,7 @@ class KerasRNN(KerasLDS):
         self.model.compile(**self.compile_opts)
         self.model.fit(x_train0, self.y_train, verbose=0)
 
-    def predict(self, X):
+    def predict_next(self, X):
         if self.is_initialized:
             x_test0 = unroll_data(X, self.t)
             y_hat = self.model.predict(x_test0)
@@ -241,7 +241,7 @@ class KerasSimpleRNN(KerasLDS):
         self.model.compile(**self.compile_opts)
         self.model.fit(x_train0, self.y_train, verbose=0)
 
-    def predict(self, X):
+    def predict_next(self, X):
         if self.is_initialized:
             x_test0 = unroll_data(X, self.t)
             y_hat = self.model.predict(x_test0)
@@ -282,7 +282,7 @@ class KerasSRN_batch(KerasLDS):
             y0 = self.y_train + noise
             self.model.train_on_batch(unroll_data(X0, self.t), y0)
 
-    def predict(self, X):
+    def predict_next(self, X):
         if self.is_initialized:
             x_test0 = unroll_data(X, self.t)
             y_hat = self.model.predict(x_test0)
@@ -294,6 +294,12 @@ class KerasSRN_batch(KerasLDS):
                 return X
             else:
                 return X[-1, :]
+
+    def predict(self, X):
+        if self.is_initialized:
+            x_test0 = unroll_data(X, self.t)
+            return self.model.predict(x_test0)
+        return X
 
 
 

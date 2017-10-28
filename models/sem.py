@@ -118,7 +118,7 @@ class SEM(object):
                 model = event_models[k]
 
                 # lik[k] = model.log_likelihood(X_prev, X_curr, Sigma)
-                Y_hat = model.predict(X_prev)
+                Y_hat = model.predict_next(X_prev)
                 # print X_curr.shape
                 # print Y_hat.shape
                 lik[k] = np.log(mvnormal.pdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma))
