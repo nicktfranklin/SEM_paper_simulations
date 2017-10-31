@@ -57,7 +57,7 @@ class SEM(object):
         self.f_class = f_class
         self.f_opts = f_opts
 
-    def run(self, X, K=None, return_predictions=False):
+    def run(self, X, K=None, return_pe=False):
         """
         Parameters
         ----------
@@ -78,8 +78,8 @@ class SEM(object):
         if K is None:
             K = N
 
-        if return_predictions:
-            y = np.zeros(np.shape(X))
+        if return_pe:
+            pe = np.zeros(np.shape(X)[0])
 
         C = np.zeros(K)  # running count of the clustering process
 
@@ -90,7 +90,6 @@ class SEM(object):
         post = np.zeros((N, K))
 
         for n in tnrange(N):
-            # print "New Trail"
             X_curr = X[n, :].copy()
 
             # calculate sCRP prior
@@ -117,19 +116,20 @@ class SEM(object):
                 # get the log likelihood for each event model
                 model = event_models[k]
 
-                # lik[k] = model.log_likelihood(X_prev, X_curr, Sigma)
                 Y_hat = model.predict_next(X_prev)
-                # print X_curr.shape
-                # print Y_hat.shape
                 lik[k] = np.log(mvnormal.pdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma))
 
             # posterior
             p = np.log(prior[:len(active)]) + lik
             post[n, :len(active)] = np.exp(p - logsumexp(p))
-
             # update
 
             k = np.argmax(post[n, :])  # MAP cluster
+
+            # get the euclidean distance
+            if return_pe:
+                model = event_models[k]
+                pe[n] = np.linalg.norm(X_curr - model.predict_next(X_prev))
 
             C[k] += 1  # update counts
             if (X_prev.ndim > 1) & (X_prev.shape[0] > 1):
@@ -152,4 +152,6 @@ class SEM(object):
         for m in event_models.itervalues():
             m.close()
 
+        if return_pe:
+            return post, pe
         return post

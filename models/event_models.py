@@ -266,11 +266,12 @@ class KerasSRN_batch(KerasLDS):
         self.n_hidden2 = n_hidden2
         self.hidden_act1 = hidden_act1
         self.hidden_act2 = hidden_act2
+        self.D = D
 
     def _estimate(self):
 
         self.model = Sequential()
-        self.model.add(SimpleRNN(self.n_hidden1, input_shape=(self.t, self.n_hidden1), activation=self.hidden_act1))
+        self.model.add(SimpleRNN(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
         self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2))
         self.model.add(Dense(self.D, activation=None))
         self.model.compile(**self.compile_opts)
@@ -285,7 +286,7 @@ class KerasSRN_batch(KerasLDS):
     def predict_next(self, X):
         if self.is_initialized:
             x_test0 = unroll_data(X, self.t)
-            y_hat = self.model.predict(x_test0)
+            y_hat = np.array(self.model.predict(x_test0))
             if y_hat.ndim == 1:
                 return y_hat
             return y_hat[-1, :]

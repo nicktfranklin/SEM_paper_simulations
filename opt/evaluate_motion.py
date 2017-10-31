@@ -101,7 +101,7 @@ def sample_omega():
     return Omega
 
 
-def evaluate(X, y, Omega, K=None, number=0, save=True):
+def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False):
     """
 
     Parameters
@@ -129,7 +129,10 @@ def evaluate(X, y, Omega, K=None, number=0, save=True):
     if K is None:
         K = X.shape[0] / 2
 
-    post = sem.run(X, K=K)
+    if return_pe:
+        post, pe = sem.run(X, K=K, return_pe=True)
+    else:
+        post = sem.run(X, K=K)
 
     y_hat = np.argmax(post, axis=1)
 
@@ -141,7 +144,10 @@ def evaluate(X, y, Omega, K=None, number=0, save=True):
         pickle.dump({'AdjRandScore': r, 'Omega': Omega}, f)
         f.close()
         return
-    
+
+    if return_pe:
+        return r, post, pe
+
     return r, post
 
 if __name__ == '__main__':
