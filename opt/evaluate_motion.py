@@ -35,72 +35,6 @@ def generate_random_events(n_events, data_file=None):
     return np.concatenate(X), np.concatenate(y)
 
 
-def sample_act():
-    return ['tanh', None, 'relu'][np.random.randint(3)]
-
-
-def gen_keras_MLP_params():
-    n_hidden = np.random.randint(100)
-    hidden_act = sample_act()
-    return {'n_hidden': n_hidden, 'hidden_act': hidden_act}
-
-
-def gen_keras_simple_RNN_params():
-    n_hidden = np.random.randint(100) + 1
-    hidden_act = ['tanh', None, 'relu'][np.random.randint(3)]
-    t = np.random.randint(8) + 1
-    return {'n_hidden': n_hidden, 'hidden_act': hidden_act, 't':t}
-
-def gen_keras_mRNN_params():
-    n_hidden1 = np.random.randint(100)
-    n_hidden2 = np.random.randint(100)
-
-    hidden_act1 = sample_act()
-    hidden_act2 = sample_act()
-
-    t = np.random.randint(8) + 1
-
-    return {
-        'n_hidden1': n_hidden1,
-        'n_hidden2': n_hidden2,
-        'hidden_act1': hidden_act1,
-        'hidden_act2': hidden_act2,
-        't':t
-    }
-
-
-def sample_omega():
-
-    available_models = {
-        'MLP': (models.KerasMultiLayerNN, gen_keras_MLP_params),
-        'SimpleRNN': (models.KerasSimpleRNN, gen_keras_simple_RNN_params),
-        'mRNN': (models.KerasRNN, gen_keras_mRNN_params)
-    }
-
-    model_name = available_models.keys()[np.random.randint(len(available_models))]
-
-    f_opts = available_models[model_name][1]()
-
-    # sample SGD parameters
-    sgd_kwargs = {
-        'lr': np.log(1 + np.exp(np.random.standard_t(4))) * 10e-2,
-        'momentum': np.log(1 + np.exp(np.random.standard_t(4))) * 10e-3,
-        'decay': np.log(1 + np.exp(np.random.standard_t(4))) * 10e-3,
-        'nesterov': [True, False][np.random.randint(2)],
-    }
-    f_opts['sgd_kwargs'] = sgd_kwargs
-
-    Omega = {
-        'lmda': np.random.uniform(0, 100),
-        'alfa': np.exp(np.random.standard_t(25)),
-        'beta': np.random.uniform(0.00001, 0.5),
-        'f_class': available_models[model_name][0],
-        'f_opts': f_opts,
-
-    }
-    return Omega
-
-
 def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False):
     """
 
@@ -151,10 +85,4 @@ def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False):
     return r, post
 
 if __name__ == '__main__':
-
-    number = np.random.randint(10e8)
-    X, y = generate_random_events(50)
-
-    Omega = sample_omega()
-    evaluate(X, y, Omega, number=number)
-
+    pass
