@@ -117,7 +117,7 @@ class SEM(object):
                 model = event_models[k]
 
                 Y_hat = model.predict_next(X_prev)
-                lik[k] = np.log(mvnormal.pdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma))
+                lik[k] = mvnormal.logpdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma)
 
             # posterior
             p = np.log(prior[:len(active)]) + lik
