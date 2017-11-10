@@ -76,7 +76,6 @@ class LinearDynamicSystem(EventModel):
         Y_hat = self.beta + np.matmul(X, np.reshape(self.W, (self.D, self.D)))
         return Y_hat
 
-
     def update(self, X, Y):
         """
         Parameters
