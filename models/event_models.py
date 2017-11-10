@@ -57,8 +57,8 @@ class LinearDynamicSystem(EventModel):
             learning rate
         """
         EventModel.__init__(self, D)
-        self.beta = np.zeros(D).flatten()
-        self.W = np.eye(D).flatten()
+        self.beta = np.zeros(D)
+        self.W = np.eye(D)
         self.eta = eta
 
     def predict_next(self, X):
@@ -73,7 +73,7 @@ class LinearDynamicSystem(EventModel):
         Y_hat: np.array of length D
             prediction of vector at time t+1
         """
-        Y_hat = self.beta + np.matmul(X, np.reshape(self.W, (self.D, self.D)))
+        Y_hat = self.beta + np.matmul(X, self.W)
         return Y_hat
 
     def update(self, X, Y):
@@ -89,18 +89,13 @@ class LinearDynamicSystem(EventModel):
         """
         Y_hat = np.reshape(self.predict_next(X), (Y.shape[0]))
 
-        # needed for updating logic
-        dXdb = np.eye(self.D)
-        dXdW = np.tile((np.tile(X, (1, self.D))), (self.D, 1))
-        g = np.concatenate([dXdb, dXdW], axis=1)
-
-        # vectorize the parameters
-        theta = np.concatenate([self.beta, self.W.flatten()])
-        theta += self.eta * np.matmul(Y - Y_hat, g)
+        # compute gradient of log likelihood w.r.t. parameters
+        db = self.eta * (Y - Y_hat)
+        dW = self.eta * np.matmul(X.reshape(self.D, 1), (Y - Y_hat).reshape(1, self.D))
 
         # store the updated parameters
-        self.beta = theta[:self.D]
-        self.W = theta[self.D:]
+        self.beta += db
+        self.W += dW
 
 
 class KerasLDS(EventModel):
