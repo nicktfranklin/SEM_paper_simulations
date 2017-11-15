@@ -2,6 +2,7 @@ import numpy as np
 from scipy.misc import logsumexp
 from tqdm import tnrange
 from scipy.stats import multivariate_normal as mvnormal
+from scipy.optimize import minimize
 
 def get_training_contin_clust(posterior, current_time, horizon):
     if (horizon > 1) & (current_time >= 1):
@@ -57,7 +58,7 @@ class SEM(object):
         self.f_class = f_class
         self.f_opts = f_opts
 
-    def run(self, X, K=None, return_pe=False):
+    def run(self, X, K=None, return_pe=False, split_post=False):
         """
         Parameters
         ----------
@@ -88,6 +89,11 @@ class SEM(object):
         X_prev = np.zeros(D)  # need a starting location as is sequential model
         # X_curr = X[0, :]
         post = np.zeros((N, K))
+
+        # debugging function
+        if split_post:
+            log_like = np.zeros((N, K))
+            log_prior = np.zeros((N, K))
 
         for n in tnrange(N):
             X_curr = X[n, :].copy()
@@ -120,9 +126,13 @@ class SEM(object):
                 lik[k] = mvnormal.logpdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma)
 
             # posterior
-            p = np.log(prior[:len(active)]) + lik
+            p = np.log(prior[:len(active)]) + lik - np.max(lik)  # subtracting the max like doesn't change proportionality
             post[n, :len(active)] = np.exp(p - logsumexp(p))
             # update
+
+            if split_post:
+                log_like[n, :len(active)] = lik - np.max(lik)
+                log_prior[n, :len(active)] = np.log(prior[:len(active)])
 
             k = np.argmax(post[n, :])  # MAP cluster
 
@@ -153,5 +163,11 @@ class SEM(object):
             m.close()
 
         if return_pe:
+            if split_post:
+                return post, pe, log_like, log_prior
             return post, pe
+
+        if split_post:
+            return post, None, log_like, log_prior
+
         return post
