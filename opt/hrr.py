@@ -1,4 +1,5 @@
 import numpy as np
+from sklearn.preprocessing import normalize
 
 def conv_circ(signal, kernal, n=None):
     '''
@@ -70,9 +71,16 @@ def embed(n, d, distr='spikeslab_gaussian', param=None):
 
 
 def encode(a, b):
-    return conv_circ(a, b, np.size(a))
+    return normalize(conv_circ(a, b, np.size(a)))
+
+
+def embed_onehot(n, d):
+    v = np.zeros((n, d))
+    for ii in range(n):
+        v[ii][np.random.randint(d)] = 1
+    return v
 
 
 def decode(a, b):
     c = np.real(np.fft.ifft(np.fft.fft(a, np.size(a)) * np.conj(np.fft.fft(b, np.size(a)))))
-    return c / np.size(a)
+    return normalize(c / np.size(a))
