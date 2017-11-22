@@ -35,7 +35,8 @@ def generate_random_events(n_events, data_file=None):
     return np.concatenate(X), np.concatenate(y)
 
 
-def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False):
+def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False, split_post=False,
+             semclass=models.SEM):
     """
 
     Parameters
@@ -58,15 +59,21 @@ def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False):
         r: int, adjusted rand score
     """
 
-    sem = models.SEM(**Omega)
+    sem = semclass(**Omega)
 
     if K is None:
         K = X.shape[0] / 2
 
     if return_pe:
-        post, pe = sem.run(X, K=K, return_pe=True)
+        if split_post:
+            post, pe, log_lik, log_prior = sem.run(X, K=K, return_pe=True, split_post=True)
+        else:
+            post, pe = sem.run(X, K=K, return_pe=True)
     else:
-        post = sem.run(X, K=K)
+        if split_post:
+            post, _, log_lik, log_prior = sem.run(X, K=K, return_pe=True, split_post=True)
+        else:
+            post = sem.run(X, K=K)
 
     y_hat = np.argmax(post, axis=1)
 
@@ -80,7 +87,11 @@ def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False):
         return
 
     if return_pe:
+        if split_post:
+            return r, post, pe, log_lik, log_prior
         return r, post, pe
+    if split_post:
+        return r, post, _, log_lik, log_prior
 
     return r, post
 
