@@ -106,7 +106,12 @@ class KerasLDS(EventModel):
         self.y_train = np.zeros((0, self.D))
         self.is_initialized = False
         if sgd_kwargs is None:
-            sgd_kwargs = dict(lr=0.01, momentum=0.9, nesterov=True)
+            sgd_kwargs = {
+                'nesterov': True,
+                'lr': 0.1,
+                'momentum': 0.5,
+                'decay': 0.0001
+            }
 
         self.compile_opts = dict(optimizer=optimizers.SGD(**sgd_kwargs), loss='mean_squared_error')
         self.n_epochs = n_epochs

@@ -105,9 +105,9 @@ class SEM(object):
             if idx < K:
                 prior[idx] = self.alfa  # set new cluster probability to alpha
 
-            # add stickiness parameter for n>0
+            # add stickiness parameter for n>0, only for the previously chosen event
             if n > 0:
-                prior[np.argmax(post[n, :])] + self.lmda
+                prior[np.argmax(post[n-1, :])] + self.lmda
 
             prior /= np.sum(prior)
 
