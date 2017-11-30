@@ -461,7 +461,7 @@ class KerasSimpleOnlineRNN(KerasLDS):
     #
     def update(self, X, Y):
         if X.ndim > 1:
-            X = X[-1,:] # only consider last example TODO fix run() in sem.oy
+            X = X[-1, :]  # only consider last example TODO fix run() in sem.oy
         assert X.ndim == 1
         assert X.shape[0] == self.D
         assert Y.ndim == 1
@@ -492,7 +492,7 @@ class KerasSimpleOnlineRNN(KerasLDS):
     #
     def predict_next(self, X):
         if X.ndim > 1:
-            X = X[-1,:] # only consider last example TODO fix run() in sem.py
+            X = X[-1, :] # only consider last example TODO fix run() in sem.py
         assert np.ndim(X) == 1
         assert X.shape[0] == self.D
 
@@ -522,3 +522,16 @@ class KerasSimpleOnlineRNN(KerasLDS):
             y_train = self.y_history[clust_id]
             h = self.model.fit(x_train, y_train, verbose=0, epochs=self.n_epochs, shuffle=False)
 
+
+class KerasOnlineGRU(KerasSimpleOnlineRNN):
+    def init_model(self):
+        self.sess = tf.Session()
+
+        # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
+        # input_shape[1] = input_dim; each example is a self.D-dimensional vector
+        self.model = Sequential()
+        self.model.add(GRU(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
+        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2))
+        self.model.add(Dropout(self.dropout))
+        self.model.add(Dense(self.D, activation=None))
+        self.model.compile(**self.compile_opts)

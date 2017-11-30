@@ -128,10 +128,11 @@ class SEM(object):
                 lik[k] = mvnormal.logpdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma)
 
             # posterior
-            p = np.log(prior[:len(active)]) + lik - np.max(lik)  # subtracting the max like doesn't change proportionality
+            p = np.log(prior[:len(active)]) + lik - np.max(lik)  #  subtracting the max like doesn't change proportionality
             post[n, :len(active)] = np.exp(p - logsumexp(p))
             # update
 
+            # this is a diagnostic readout and does not effect the model
             if split_post:
                 log_like[n, :len(active)] = lik - np.max(lik)
                 log_prior[n, :len(active)] = np.log(prior[:len(active)])
@@ -158,14 +159,10 @@ class SEM(object):
                 event_models[k].new_cluster()
                 event_models[k].update(X_null, X_curr)
 
-            t0 = get_training_contin_clust(post, n, self.t) # get the time horizon for recursion
-            # print n, self.t, t0
-            # print max([0, n-t0+1]), n+1
-            # print range(max([0, n-t0+1]), n+1)
+            t0 = get_training_contin_clust(post, n, self.t)  # get the time horizon for recursion
 
             X_prev = X[max([0, n-t0+1]):n+1, :]  # store the current vector for next trial
             k_prev = k
-            # print X_prev.shape
             # # update the current scene vector
             # t0 = get_training_contin_clust(post, n+1, self.t)
             # X_curr = X[max([0, n+1-t0]):n+2, :]
