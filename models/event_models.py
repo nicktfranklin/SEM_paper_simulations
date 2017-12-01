@@ -428,12 +428,6 @@ class KerasSimpleOnlineRNN(KerasLDS):
         self.x_history = [np.zeros((0, self.D))]
         self.y_history = [np.zeros((0, self.D))]
 
-        #print 'New KerasSimpleOnlineRNN: ' \
-        #        ' D =', D, \
-        #        ' t =', t, \
-        #        ' n_epochs =', n_epochs, \
-        #        ' dropout =', dropout
-
         self.init_model()
 
     # initialize model once so we can then update it online
