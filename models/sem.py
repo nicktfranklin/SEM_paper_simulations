@@ -91,6 +91,7 @@ class SEM(object):
         k_prev = None # last event type
         # X_curr = X[0, :]
         post = np.zeros((N, K))
+        k_active = None
 
         # debugging function
         if split_post:
@@ -109,7 +110,7 @@ class SEM(object):
 
             # add stickiness parameter for n>0, only for the previously chosen event
             if n > 0:
-                prior[np.argmax(post[n-1, :])] + self.lmda
+                prior[np.argmax(post[n-1, :])] += self.lmda
 
             prior /= np.sum(prior)
 
@@ -124,7 +125,10 @@ class SEM(object):
                 # get the log likelihood for each event model
                 model = event_models[k]
 
-                Y_hat = model.predict_next(X_prev)
+                if k == k_active:
+                    Y_hat = model.predict_next(X_prev)
+                else:
+                    Y_hat = model.predict_f0()
                 lik[k] = mvnormal.logpdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma)
 
             # posterior
