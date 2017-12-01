@@ -109,7 +109,7 @@ class SEM(object):
 
             # add stickiness parameter for n>0, only for the previously chosen event
             if n > 0:
-                prior[np.argmax(post[n-1, :])] + self.lmda
+                prior[np.argmax(post[n-1, :])] += self.lmda
 
             prior /= np.sum(prior)
 
