@@ -4,6 +4,7 @@ from utils import unroll_data
 from keras.models import Sequential
 from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout
 from keras import optimizers
+from keras import regularizers
 
 
 class EventModel(object):
@@ -396,7 +397,7 @@ class KerasGRU_batch(KerasLDS):
 class KerasSimpleOnlineRNN(KerasLDS):
 
     def __init__(self, D, t=5, n_hidden1=10, n_hidden2=10, hidden_act1='relu', hidden_act2='relu',
-                 sgd_kwargs=None, n_epochs=50, dropout=0.50):
+                 sgd_kwargs=None, n_epochs=50, dropout=0.50, l2_regularization=0.01):
         #
         # D = dimension of single input / output example
         # t = number of time steps to unroll back in time for the recurrent layer
@@ -418,6 +419,7 @@ class KerasSimpleOnlineRNN(KerasLDS):
         self.hidden_act2 = hidden_act2
         self.D = D
         self.dropout = dropout
+        self.l2_reg = l2_regularization
 
         # list of clusters of scenes:
         # each element of list = history of scenes for given cluster
@@ -443,9 +445,10 @@ class KerasSimpleOnlineRNN(KerasLDS):
         # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.D-dimensional vector
         self.model.add(SimpleRNN(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
-        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2))
+        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2,
+                             kernel_regularizer=regularizers.l2(self.l2_reg)))
         self.model.add(Dropout(self.dropout))
-        self.model.add(Dense(self.D, activation=None))
+        self.model.add(Dense(self.D, activation=None, kernel_regularizer=regularizers.l2(self.l2_reg)))
         self.model.compile(**self.compile_opts)
 
     # concatenate current example with the history of the last t-1 examples
@@ -477,10 +480,6 @@ class KerasSimpleOnlineRNN(KerasLDS):
         #
         x_train = self._unroll(x_example)
         y_train = y_example
-
-        #print 'Update: '
-        #print 'x_train: ', x_train
-        #print 'y_train: ', y_train
 
         h = self.model.fit(x_train, y_train, verbose=0, epochs=self.n_epochs, shuffle=False)
 
@@ -531,7 +530,8 @@ class KerasOnlineGRU(KerasSimpleOnlineRNN):
         # input_shape[1] = input_dim; each example is a self.D-dimensional vector
         self.model = Sequential()
         self.model.add(GRU(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
-        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2))
+        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2,
+                             kernel_regularizer=regularizers.l2(self.l2_reg)))
         self.model.add(Dropout(self.dropout))
-        self.model.add(Dense(self.D, activation=None))
+        self.model.add(Dense(self.D, activation=None, kernel_regularizer=regularizers.l2(self.l2_reg)))
         self.model.compile(**self.compile_opts)
