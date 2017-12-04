@@ -139,6 +139,7 @@ class SEM(object):
                 event_models[k].update(X_prev, X_curr)
             else:
                 # we're in a new event -> update the initialization point only
+                event_models[k].new_cluster()
                 event_models[k].update_f0(X_curr)
 
             X_prev = X_curr  # store the current vector for next trial

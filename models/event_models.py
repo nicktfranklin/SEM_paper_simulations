@@ -51,6 +51,9 @@ class EventModel(object):
     def close(self):
         pass
 
+    def new_cluster(self):
+        pass
+
 
 class LinearDynamicSystem(EventModel):
     def __init__(self, D, eta=0.01):
