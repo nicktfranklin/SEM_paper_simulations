@@ -86,7 +86,9 @@ class SEM(object):
 
         event_models = dict()  # initialize an empty event model space
 
-        X_prev = np.zeros(D)  # need a starting location as is sequential model
+        X_null = np.zeros(D)  # need a starting location as it's a sequential model
+        X_prev = X_null # last scene
+        k_prev = None # last event type
         # X_curr = X[0, :]
         post = np.zeros((N, K))
 
@@ -126,10 +128,11 @@ class SEM(object):
                 lik[k] = mvnormal.logpdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma)
 
             # posterior
-            p = np.log(prior[:len(active)]) + lik - np.max(lik)  # subtracting the max like doesn't change proportionality
+            p = np.log(prior[:len(active)]) + lik - np.max(lik)  #  subtracting the max like doesn't change proportionality
             post[n, :len(active)] = np.exp(p - logsumexp(p))
             # update
 
+            # this is a diagnostic readout and does not effect the model
             if split_post:
                 log_like[n, :len(active)] = lik - np.max(lik)
                 log_prior[n, :len(active)] = np.log(prior[:len(active)])
@@ -142,18 +145,24 @@ class SEM(object):
                 pe[n] = np.linalg.norm(X_curr - model.predict_next(X_prev))
 
             C[k] += 1  # update counts
-            if (X_prev.ndim > 1) & (X_prev.shape[0] > 1):
-                event_models[k].update(X_prev[-1, :], X_curr)  # update event model
-            else:
-                event_models[k].update(X_prev, X_curr)  # update event model
 
-            t0 = get_training_contin_clust(post, n, self.t) # get the time horizon for recursion
-            # print n, self.t, t0
-            # print max([0, n-t0+1]), n+1
-            # print range(max([0, n-t0+1]), n+1)
+            # update event model
+            #
+            if k_prev == k:
+                # we're in the same event -> update using previous scene
+                if (X_prev.ndim > 1) & (X_prev.shape[0] > 1):
+                    event_models[k].update(X_prev[-1, :], X_curr)
+                else:
+                    event_models[k].update(X_prev, X_curr)
+            else:
+                # we're in a new event -> create a new cluster of scenes and update using null scene as previous scene
+                event_models[k].new_cluster()
+                event_models[k].update(X_null, X_curr)
+
+            t0 = get_training_contin_clust(post, n, self.t)  # get the time horizon for recursion
 
             X_prev = X[max([0, n-t0+1]):n+1, :]  # store the current vector for next trial
-            # print X_prev.shape
+            k_prev = k
             # # update the current scene vector
             # t0 = get_training_contin_clust(post, n+1, self.t)
             # X_curr = X[max([0, n+1-t0]):n+2, :]
