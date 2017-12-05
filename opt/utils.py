@@ -66,19 +66,19 @@ def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False, split_po
 
     if return_pe:
         if split_post:
-            post, pe, log_lik, log_prior = sem.run(X, K=K, return_pe=True, split_post=True)
+            post, pe, log_lik, log_prior = sem.run(X, K=K, return_pe=True, return_lik_prior=True)
         else:
             post, pe = sem.run(X, K=K, return_pe=True)
     else:
         if split_post:
-            post, _, log_lik, log_prior = sem.run(X, K=K, return_pe=True, split_post=True)
+            post, _, log_lik, log_prior = sem.run(X, K=K, return_pe=True, return_lik_prior=True)
         else:
             post = sem.run(X, K=K)
 
     y_hat = np.argmax(post, axis=1)
 
     r = adjusted_rand_score(y, y_hat)
-    
+
     if save:
         f = open('SEM_sample_%d.save' % number, 'wb')
 
@@ -94,6 +94,7 @@ def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False, split_po
         return r, post, _, log_lik, log_prior
 
     return r, post
+
 
 if __name__ == '__main__':
     pass
