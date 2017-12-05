@@ -132,8 +132,7 @@ class KerasLDS(EventModel):
         self.compile_opts = dict(optimizer=optimizers.SGD(**sgd_kwargs), loss='mean_squared_error')
         self.n_epochs = n_epochs
 
-        self.f0 = np.zeros(D)
-        self.f0_count = 0.0
+        self.is_visited = False  # governs the special case of model's first prediction (i.e. with no experience)
 
         if init_model:
             self._init_model()
@@ -158,6 +157,7 @@ class KerasLDS(EventModel):
         self.x_train = np.concatenate([self.x_train, np.reshape(X, newshape=(N, self.D))])
         self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(N, self.D))])
         self.model.fit(self.x_train, self.y_train, verbose=0, nb_epoch=self.n_epochs)
+        self.is_visited = True
 
     def predict_next(self, X):
         """
@@ -174,13 +174,15 @@ class KerasLDS(EventModel):
         return self.model.predict(np.reshape(X, newshape=(N, self.D)))
 
     def predict_f0(self):
-        return self.f0
+        if self.is_visited:
+            return self.predict_next(np.zeros(self.D))
+        return np.zeros(self.D)
 
     def update_f0(self, Y):
-        eta = 1. / (1.0 + self.f0_count)
-        self.f0 += eta * (Y - self.f0)
-        self.f0_count += 1.0
-
+        # eta = 1. / (1.0 + self.f0_count)
+        # self.f0 += eta * (Y - self.f0)
+        # self.f0_count += 1.0
+        self.update(np.zeros(self.D), Y)
 
 class KerasMultiLayerPerceptron(KerasLDS):
 
@@ -291,6 +293,7 @@ class KerasSimpleRNN(KerasLDS):
 
         self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
         self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
+        self.is_visited = True
         return h
 
     # predict a single example
