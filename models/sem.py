@@ -41,7 +41,7 @@ class SEM(object):
         self.f_class = f_class
         self.f_opts = f_opts
 
-    def run(self, X, K=None, return_pe=False, split_post=False):
+    def run(self, X, K=None, return_pe=False, return_err=False, return_lik_prior=False):
         """
         Parameters
         ----------
@@ -49,6 +49,13 @@ class SEM(object):
 
         K: int
             maximum number of clusters
+
+        return_pe: bool
+            return the "prediction error" of the model - i.e. the euclidean distance between the prediction
+            of the previously active cluster and the current observation.
+
+        return_lik_prior: bool
+            return the model's log likelihood and log prior over clusterings
 
         Return
         ------
@@ -77,7 +84,7 @@ class SEM(object):
         k_active = None
 
         # debugging function
-        if split_post:
+        if return_lik_prior:
             log_like = np.zeros((N, K))
             log_prior = np.zeros((N, K))
 
@@ -115,20 +122,20 @@ class SEM(object):
                 lik[k] = mvnormal.logpdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma)
 
             # posterior
-            p = np.log(prior[:len(active)]) + lik - np.max(lik)  #  subtracting the max like doesn't change proportionality
+            p = np.log(prior[:len(active)]) + lik - np.max(lik)  # subtracting the max like doesn't change proportionality
             post[n, :len(active)] = np.exp(p - logsumexp(p))
             # update
 
             # this is a diagnostic readout and does not effect the model
-            if split_post:
+            if return_lik_prior:
                 log_like[n, :len(active)] = lik - np.max(lik)
                 log_prior[n, :len(active)] = np.log(prior[:len(active)])
 
             k = np.argmax(post[n, :])  # MAP cluster
 
-            # get the euclidean distance
-            if return_pe:
-                model = event_models[k]
+            # prediction error: euclidean distance of the last model and the current scene vector
+            if return_pe and n > 0:
+                model = event_models[k_prev]
                 pe[n] = np.linalg.norm(X_curr - model.predict_next(X_prev))
 
             C[k] += 1  # update counts
@@ -150,11 +157,11 @@ class SEM(object):
             m.close()
 
         if return_pe:
-            if split_post:
+            if return_lik_prior:
                 return post, pe, log_like, log_prior
             return post, pe
 
-        if split_post:
+        if return_lik_prior:
             return post, None, log_like, log_prior
 
         return post
