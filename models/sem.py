@@ -2,22 +2,6 @@ import numpy as np
 from scipy.misc import logsumexp
 from tqdm import tnrange
 from scipy.stats import multivariate_normal as mvnormal
-from scipy.optimize import minimize
-
-def get_training_contin_clust(posterior, current_time, horizon):
-    if (horizon > 1) & (current_time >= 1):
-        # get the last t vectors within the current cluster...
-        h0 = np.min([current_time, horizon])
-        ks = np.argmax(posterior[current_time-h0:current_time+1, :], axis=1)
-        ks = (ks == ks[-1]).tolist()
-        t0 = 0
-        while ks.pop():
-            t0 += 1
-            if not ks:
-                break
-    else:
-        t0 = 1
-    return t0
 
 
 class SEM(object):
@@ -26,7 +10,7 @@ class SEM(object):
     in python. More documentation to come!
     """
 
-    def __init__(self, lmda=1., alfa=10.0, beta=0.1, t=0, f_class=None, f_opts=None):
+    def __init__(self, lmda=1., alfa=10.0, beta=0.1, f_class=None, f_opts=None):
         """
         Parameters
         ----------
@@ -50,7 +34,6 @@ class SEM(object):
         self.lmda = lmda
         self.alfa = alfa
         self.beta = beta
-        self.t = t  # used by recursive models
 
         if f_class is None:
             raise ValueError("f_model must be specified!")
@@ -86,9 +69,12 @@ class SEM(object):
 
         event_models = dict()  # initialize an empty event model space
 
-        X_prev = np.zeros(D)  # need a starting location as is sequential model
+        X_null = np.zeros(D)  # need a starting location as it's a sequential model
+        X_prev = X_null # last scene
+        k_prev = None # last event type
         # X_curr = X[0, :]
         post = np.zeros((N, K))
+        k_active = None
 
         # debugging function
         if split_post:
@@ -122,14 +108,18 @@ class SEM(object):
                 # get the log likelihood for each event model
                 model = event_models[k]
 
-                Y_hat = model.predict_next(X_prev)
+                if k == k_active:
+                    Y_hat = model.predict_next(X_prev)
+                else:
+                    Y_hat = model.predict_f0()
                 lik[k] = mvnormal.logpdf(X_curr - Y_hat, mean=np.zeros(D), cov=Sigma)
 
             # posterior
-            p = np.log(prior[:len(active)]) + lik - np.max(lik)  # subtracting the max like doesn't change proportionality
+            p = np.log(prior[:len(active)]) + lik - np.max(lik)  #  subtracting the max like doesn't change proportionality
             post[n, :len(active)] = np.exp(p - logsumexp(p))
             # update
 
+            # this is a diagnostic readout and does not effect the model
             if split_post:
                 log_like[n, :len(active)] = lik - np.max(lik)
                 log_prior[n, :len(active)] = np.log(prior[:len(active)])
@@ -142,21 +132,18 @@ class SEM(object):
                 pe[n] = np.linalg.norm(X_curr - model.predict_next(X_prev))
 
             C[k] += 1  # update counts
-            if (X_prev.ndim > 1) & (X_prev.shape[0] > 1):
-                event_models[k].update(X_prev[-1, :], X_curr)  # update event model
+
+            # update event model
+            if k_prev == k:
+                # we're in the same event -> update using previous scene
+                event_models[k].update(X_prev, X_curr)
             else:
-                event_models[k].update(X_prev, X_curr)  # update event model
+                # we're in a new event -> update the initialization point only
+                event_models[k].new_cluster()
+                event_models[k].update_f0(X_curr)
 
-            t0 = get_training_contin_clust(post, n, self.t) # get the time horizon for recursion
-            # print n, self.t, t0
-            # print max([0, n-t0+1]), n+1
-            # print range(max([0, n-t0+1]), n+1)
-
-            X_prev = X[max([0, n-t0+1]):n+1, :]  # store the current vector for next trial
-            # print X_prev.shape
-            # # update the current scene vector
-            # t0 = get_training_contin_clust(post, n+1, self.t)
-            # X_curr = X[max([0, n+1-t0]):n+2, :]
+            X_prev = X_curr  # store the current vector for next trial
+            k_prev = k
 
         # after all of the training, close the models!
         for m in event_models.itervalues():
