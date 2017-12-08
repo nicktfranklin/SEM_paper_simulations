@@ -149,6 +149,8 @@ class SEM(object):
                 event_models[k].new_cluster()
                 event_models[k].update_f0(X_curr)
 
+            #print 'scene ', n, ' map = ', k
+
             X_prev = X_curr  # store the current vector for next trial
             k_prev = k
 

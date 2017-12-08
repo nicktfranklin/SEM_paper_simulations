@@ -32,13 +32,13 @@ class TestData(object):
 
     def performance(self, post):
         y_hat = np.argmax(post, axis=1)
-        ami = metrics.adjusted_mutual_info_score(self.y, y_hat)
-        print "Adjusted Mutual Information:", ami
-        rs = metrics.adjusted_rand_score(self.y, y_hat)
-        print "Adjusted Rand Score:", rs
+        mi = metrics.adjusted_mutual_info_score(self.y, y_hat)
+        print "Adjusted Mutual Information:", mi
+        r = metrics.adjusted_rand_score(self.y, y_hat)
+        print "Adjusted Rand Score:", r
         print 
         print np.argmax(post, axis=1)
-        return ami, rs
+        return mi, r
 
     def plot_segmentation(self, post):
         if self.D == 2:
@@ -59,3 +59,21 @@ class TestData(object):
             
         axes[1].plot(post)
         plt.show()
+
+    def plot_max_cluster(self, post):
+	fig, axes = plt.subplots(2, 1)
+
+	max_post = np.zeros(post.shape)
+	for t in range(post.shape[0]):
+	    max_post[t, :] = post[t, :] == post[t, :].max()
+	axes[0].plot(max_post)
+	axes[0].set_title('SEM max a posterior cluster')
+
+	y_clust = np.zeros((self.y.shape[0], 13))
+	for ii, y0 in enumerate(self.y):
+	    y_clust[ii, y0] = 1.0
+	axes[1].plot(y_clust)
+	axes[1].set_title('True Clusters')
+	axes[1].set_xlabel('Time')
+	plt.subplots_adjust(hspace=0.4)
+	plt.show()
