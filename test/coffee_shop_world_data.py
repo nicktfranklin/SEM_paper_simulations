@@ -24,7 +24,7 @@ class CoffeeShopWorldData(TestData):
     """ 
     Coffee Shop World test case
     """
-    def __init__(self):
+    def __init__(self, n_iterations=2, n_repeats=2, D=None):
         stories_kwargs = dict(
             mark_end_state=False,  # attach end_of_state, end_of_story marker
             attach_questions=False,  # attach question marker at the end of the state (e.g. Q_subject)
@@ -35,8 +35,6 @@ class CoffeeShopWorldData(TestData):
         input_fnames = ['poetry', 'fight']
         n_input_files = len(input_fnames)
         names_concat = '_'.join(input_fnames)
-        n_iterations = 2 # TODO parametrize
-        n_repeats = 2
 
         # generate some stories from Coffee Shop World
         # scenes is e.g. [ [(Ask, verb), (Tom, agent), (Charan, patient)],
@@ -62,12 +60,14 @@ class CoffeeShopWorldData(TestData):
         n = len(role_library) + len(filler_library);     # vocabulary size
         k = 8;      # maximum number of terms to be combined
         err = 0.01; # error probability
-        d = plate_formula(n, k, err);
+        if D is None:
+            # optionally pass D; it is useful e.g. for pretraining 
+            D = plate_formula(n, k, err);
 
         # create a library of vectors
         #
-        role_dict = {r: embed(1, d) for r in role_library}
-        filler_dict = {f: embed(1, d) for f in filler_library}
+        role_dict = {r: embed(1, D) for r in role_library}
+        filler_dict = {f: embed(1, D) for f in filler_library}
 
         # embed the scenes
         #
@@ -93,6 +93,7 @@ class CoffeeShopWorldData(TestData):
         self.X = embedded_scenes
         self.y = np.array(events)
         self.D = self.X.shape[1]
+        assert self.D == D
 
 #
 # some HRR stuff specific to this test

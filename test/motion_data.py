@@ -62,12 +62,6 @@ class MotionCaptureData(TestData):
         connect(axes[1], 5, 'k', '-', label='t=5')
         axes[1].legend()
 
-    def plot_segmentation(self, post):
-        self.plot_event(1) # plot some events for fun
-        self.plot_event(2)
-
-        TestData.plot_segmentation(self, post)
-
     def generate_random_events(self, n_events):
         """
 

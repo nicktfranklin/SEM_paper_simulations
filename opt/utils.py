@@ -96,5 +96,13 @@ def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False, split_po
     return r, post
 
 
+# generate random string
+#
+def randstr(N=10):
+    import string
+    import random
+    return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(N))
+
+
 if __name__ == '__main__':
     pass

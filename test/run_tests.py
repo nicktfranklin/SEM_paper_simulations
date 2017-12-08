@@ -5,6 +5,7 @@ from sklearn import metrics
 from sklearn.decomposition import PCA
 from pandas import read_pickle
 import pickle
+from keras.models import model_from_json
 
 # test datasets
 from toy_data import Two2DGaussians
@@ -20,25 +21,20 @@ import os.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 from models import SEM, KerasLDS, LinearDynamicSystem, KerasMultiLayerPerceptron
 from models import KerasSimpleRNN, KerasGRU
-from opt.utils import evaluate
+from opt.utils import evaluate, randstr
 # end of imports -- this line is a total hack so we can get the imports for the jupyter notebooks. Pls don't remove
 
-# lists of tests to run as (class name, params) pairs
+# lists of tests to run as (class name, pretraining params, params) pairs
+# leave pretraining params empty for no pretraining
 #
 tests_to_run = [
-    ('Two2DGaussians', [4, 0.01]),
-#    ('TwoAlternating2DGaussians', [100, 0.01]),
-#    ('TwoLinearDynamicalSystems', [100, 0.01]),
-#    ('MotionCaptureData', [10]),
-    ('CoffeeShopWorldData', [])
+#    ('Two2DGaussians', [4, 0.01], [10, 0.01]),
+#    ('Two2DGaussians', [], [6, 0.01]),
+#    ('TwoAlternating2DGaussians', [], [100, 0.01]),
+#    ('TwoLinearDynamicalSystems', [], [100, 0.01]),
+#    ('MotionCaptureData', [], [10]),
+    ('CoffeeShopWorldData', [20, 2, 400], [20, 2, 400])
 ]
-
-# generate random string
-#
-def randstr(N=10):
-    import string
-    import random
-    return ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(N))
 
 # export dictionary to file
 #
@@ -46,11 +42,15 @@ def save_pickle(data, fname):
     with open(fname, 'wb') as f:
         pickle.dump(data, f)
 
-SUFFIX = randstr(10) # random token for output filenames
-notebook_filename = 'test_notebook_' + SUFFIX + '.ipynb'
+OUTPUT_DIR = 'output'
+TOKEN = randstr(10) # random token for output filenames
+notebook_filename = 'test_notebook_' + TOKEN + '.ipynb'
 
-def get_results_filename(test_idx):
-    return 'test_results_' + SUFFIX + '_' + str(test_idx) + '.pkl'
+def get_results_filename(test_idx, suffix=''):
+    if suffix:
+        suffix = '_' + suffix
+    filename = os.path.join(OUTPUT_DIR, 'test_results_' + TOKEN + '_' + str(test_idx) + suffix + '.pkl')
+    return filename
 
 # get source code of given function
 # also reformat it a bit
@@ -71,7 +71,7 @@ def get_code(func, self='self'):
 Get the SEM hyperparameters based on the scene dimension D
 """
 def get_Omega(D):
-    t_horizon = 2 # time horizon to consider
+    t_horizon = 5 # time horizon to consider
     
     # parameters for schocastic gradient descent 
     sgd_kwargs = {
@@ -95,6 +95,7 @@ def get_Omega(D):
     # note! the likelihood function needs to be scaled with the dimensionality of the vectors
     # to compensate for the natural sharpening of the likelihood function as the dimensionality expands
     beta = 0.15 * D * np.var(test_data.X.flatten()) # this equals 1 if the data are scaled
+    beta = 0.15
     Omega = {
         'lmda': lmda,  # Stickyness (prior)
         'alfa': alfa, # Concentration parameter (prior)
@@ -111,7 +112,7 @@ def get_Omega(D):
 """
 Run a single test with given TestData object
 """
-def run_test(test_data, test_idx):
+def run_test(pretrain_data, test_data, test_idx):
     # set the parameters for the models
     # TODO because we use D to define the parameters, we cannot fully decouple the parameters from the data set. So we have a chicken or egg problem here. Ideally, the user should be able to pass Omega and test_data here and they should be independent. For now, they're not
     Omega = get_Omega(test_data.D)
@@ -119,15 +120,35 @@ def run_test(test_data, test_idx):
     K = test_data.X.shape[0]
     sem = SEM(**Omega)
 
+    # optionally pre-train the model in a supervised way using a different data set
+    #
+    if pretrain_data:
+        #res = read_pickle('output/test_results_0YD0WL0DD2_0_pretrain.pkl')
+        #sem.deserialize(res['sem'])
+        #sem.k_prev = None
+        #sem.x_prev = None
+
+        sem.pretrain(pretrain_data.X, pretrain_data.y)
+   
+        # save results
+        results_filename = get_results_filename(test_idx, 'pretrain')
+        print 'Saving pretraining results to file ', results_filename
+        res = {'pretrain_data': pretrain_data,
+               'Omega': Omega,
+               'sem': sem.serialize(OUTPUT_DIR)}
+        save_pickle(res, results_filename)
+
+    # run SEM on test data
+    #
     post, pe, log_lik, log_prior = sem.run(test_data.X, K=K, return_pe=True, return_lik_prior=True)
-    
     mi, r = test_data.performance(post)
 
+    # save results
     results_filename = get_results_filename(test_idx)
     print 'Saving results to file ', results_filename
     res = {'test_data': test_data,
            'Omega': Omega,
-           'sem': sem,
+           'sem': sem.serialize(OUTPUT_DIR),
            'post': post,
            'pe': pe,
            'log_lik': log_lik,
@@ -164,20 +185,37 @@ def write(tests_to_run, test_datas):
     assert len(tests_to_run) == len(test_datas)
     for test_idx in range(len(tests_to_run)):
         test = tests_to_run[test_idx]
-        test_data = test_datas[test_idx]
+        pretrain_data = test_datas[test_idx][0]
+        test_data = test_datas[test_idx][1]
 
         test_name = test[0]
-        test_params = test[1]
+        pretrain_params = test[1]
+        pretrain_params_str = [str(x) for x in pretrain_params]
+        test_params = test[2]
         test_params_str = [str(x) for x in test_params]
 
-        # SEM initialization code
+        # Load test data
         #
-        title = '# Running test ' + test_name + ' with params ' + ', '.join(test_params_str) + '\n'
+        title = '# Running test ' + test_name + ' with params ' + ', '.join(test_params_str)
+        if pretrain_params:
+            title = title + ' with pretraining'
+        title = title + '\n'
         nb_cells.append(new_markdown_cell(source=title))
 
-        code = ['# Load test data\n',
+        code = ['# Ensure reproducibility\n',
                 '#\n',
-                'np.random.seed(0) # for reproducibility\n',
+                'np.random.seed(0)\n']
+        nb_cells.append(new_code_cell(source=code))
+
+        if pretrain_params:
+            code = ['# Load pretrain data\n',
+                    '# \n',
+                    'pretrain_data = ' + test_name + '(' + ','.join(pretrain_params_str) + ')\n',
+                    'pretrain_data.plot_scenes()\n']
+            nb_cells.append(new_code_cell(source=code))
+        
+        code = ['# Load test data\n',
+                '# \n',
                 'test_data = ' + test_name + '(' + ','.join(test_params_str) + ')\n',
                 'test_data.plot_scenes()\n']
         nb_cells.append(new_code_cell(source=code))
@@ -188,23 +226,45 @@ def write(tests_to_run, test_datas):
                 'D = test_data.D\n'] + code
         nb_cells.append(new_code_cell(source=code))
 
-        # SEM run code
+        # Init SEM 
+        #
+        code = ['# Initialize SEM\n',
+                '# \n',
+                'K = test_data.X.shape[0]\n',
+                'sem = SEM(**Omega)\n']
+        nb_cells.append(new_code_cell(source=code))
+
+        if pretrain_params:
+            # Optionally pretrain SEM
+            #
+            code = ['# Pretrain SEM\n',
+                    '# \n',
+                    'sem.pretrain(pretrain_data.X, pretrain_data.y)\n']
+            nb_cells.append(new_code_cell(source=code))
+
+            # Alternative -- load pretrained sem from pickle file
+            #
+            results_filename = get_results_filename(test_idx, 'pretrain')
+            code = ["# Alternatively, load pretrained SEM from past execution\n",
+                    "#\n",
+                    "res = read_pickle('" + results_filename + "')\n",
+                    "sem.deserialize(res['sem'])\n"]
+            nb_cells.append(new_code_cell(source=code))
+
+        # Run SEM
         #
         code = ['# Run SEM\n',
                 '# \n',
-                'K = test_data.X.shape[0]\n',
-                'sem = SEM(**Omega)\n',
-                '\n',
                 'post, pe, log_lik, log_prior = sem.run(test_data.X, K=K, return_pe=True, return_lik_prior=True)\n']
         nb_cells.append(new_code_cell(source=code))
 
-        # Alternative -- load everything from pickle file
+        # Alternative -- load sem from pickle file
         #
         results_filename = get_results_filename(test_idx)
         code = ["# Alternatively, load results from past execution\n",
                 "#\n",
                 "res = read_pickle('" + results_filename + "')\n",
-                "sem = res['sem']\n",
+                "sem.deserialize(res['sem'])\n",
                 "post = res['post']\n"]
         nb_cells.append(new_code_cell(source=code))
     
@@ -243,15 +303,24 @@ if __name__ == "__main__":
     # run tests
     for test in tests_to_run:
         test_name = test[0]
-        test_params = test[1]
-        np.random.seed(0) # for reproducibility
+        pretrain_params = test[1]
+        test_params = test[2]
+
+        # generate test
+        np.random.seed(0) # for reproducibility -- note it's important NOT to call again before test_data (or it will generate identical pretrain and test data)
+        if pretrain_params:
+            pretrain_data = getattr(sys.modules[__name__], test_name)(*pretrain_params)
+        else:
+            pretrain_data = None
         test_data = getattr(sys.modules[__name__], test_name)(*test_params)
-        tests.append(test_data) # must do it before running them... otherwise it doesn't work
+
+        tests.append((pretrain_data, test_data)) # must do it before running them... otherwise it doesn't work
 
     for test_idx in range(len(tests)):
-        test_data = tests[test_idx]
+        pretrain_data = tests[test_idx][0]
+        test_data = tests[test_idx][1]
         print '\n\n      Running ', test_data, '\n\n'
-        mi, r = run_test(test_data, test_idx)
+        mi, r = run_test(pretrain_data, test_data, test_idx)
 
     # save jupyter notebook
     write(tests_to_run, tests)
