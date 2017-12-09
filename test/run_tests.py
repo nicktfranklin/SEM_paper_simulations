@@ -17,7 +17,7 @@ from coffee_shop_world_data import CoffeeShopWorldData
 # hack to import model from parent directory
 # TODO fix with proper modules
 import sys
-import os.path
+import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 from models import SEM, KerasLDS, LinearDynamicSystem, KerasMultiLayerPerceptron
 from models import KerasSimpleRNN, KerasGRU
@@ -28,29 +28,40 @@ from opt.utils import evaluate, randstr
 # leave pretraining params empty for no pretraining
 #
 tests_to_run = [
-#    ('Two2DGaussians', [4, 0.01], [10, 0.01]),
+#    ('Two2DGaussians', [2, 0.01], [2, 0.01]),
+#    ('Two2DGaussians', [2, 0.01], [2, 0.01]),
+#    ('Two2DGaussians', [2, 0.01], [2, 0.01]),
 #    ('Two2DGaussians', [], [6, 0.01]),
 #    ('TwoAlternating2DGaussians', [], [100, 0.01]),
 #    ('TwoLinearDynamicalSystems', [], [100, 0.01]),
 #    ('MotionCaptureData', [], [10]),
-    ('CoffeeShopWorldData', [20, 2, 400], [20, 2, 400])
+    ('CoffeeShopWorldData', [], [20, 2, 400]),
+    ('CoffeeShopWorldData', [2, 2, 400], [20, 2, 400]),
+    ('CoffeeShopWorldData', [4, 2, 400], [20, 2, 400]),
+    ('CoffeeShopWorldData', [8, 2, 400], [20, 2, 400]),
+    ('CoffeeShopWorldData', [10, 2, 400], [20, 2, 400]),
+    ('CoffeeShopWorldData', [20, 2, 400], [20, 2, 400]),
+    ('CoffeeShopWorldData', [40, 2, 400], [20, 2, 400]),
+    ('CoffeeShopWorldData', [80, 2, 400], [20, 2, 400])
 ]
 
-# export dictionary to file
-#
-def save_pickle(data, fname):
-    with open(fname, 'wb') as f:
-        pickle.dump(data, f)
-
-OUTPUT_DIR = 'output'
 TOKEN = randstr(10) # random token for output filenames
 notebook_filename = 'test_notebook_' + TOKEN + '.ipynb'
+
+OUTPUT_DIR = 'output_' + TOKEN
+os.makedirs(OUTPUT_DIR)
 
 def get_results_filename(test_idx, suffix=''):
     if suffix:
         suffix = '_' + suffix
     filename = os.path.join(OUTPUT_DIR, 'test_results_' + TOKEN + '_' + str(test_idx) + suffix + '.pkl')
     return filename
+
+# export dictionary to file
+#
+def save_pickle(data, fname):
+    with open(fname, 'wb') as f:
+        pickle.dump(data, f)
 
 # get source code of given function
 # also reformat it a bit
@@ -169,6 +180,7 @@ def write(tests_to_run, test_datas):
 
     # imports 
     # get them from this file
+    #
     code = []
     with open(__file__) as f:
         for line in f.readlines():
@@ -181,7 +193,22 @@ def write(tests_to_run, test_datas):
             code.append(line)
     nb_cells.append(new_code_cell(source=code))
 
+    # summary results
+    #
+    results_filename = get_results_filename(None, 'summary')
+    code = ["# Show summary statistics\n",
+            "\n",
+            "res = read_pickle('" + results_filename + "')\n",
+            "\n",
+            "rs = res['rs']\n",
+            "plt.plot(rs)\n",
+            "plt.xlabel('test #')\n",
+            "plt.ylabel('adjusted rand index')\n",
+            "plt.show()\n"]
+    nb_cells.append(new_code_cell(source=code))
+
     # tests
+    #
     assert len(tests_to_run) == len(test_datas)
     for test_idx in range(len(tests_to_run)):
         test = tests_to_run[test_idx]
@@ -198,7 +225,7 @@ def write(tests_to_run, test_datas):
         #
         title = '# Running test ' + test_name + ' with params ' + ', '.join(test_params_str)
         if pretrain_params:
-            title = title + ' with pretraining'
+            title = title + ' with pretraining params ' + ', '.join(pretrain_params_str)
         title = title + '\n'
         nb_cells.append(new_markdown_cell(source=title))
 
@@ -239,7 +266,7 @@ def write(tests_to_run, test_datas):
             #
             code = ['# Pretrain SEM\n',
                     '# \n',
-                    'sem.pretrain(pretrain_data.X, pretrain_data.y)\n']
+                    '#sem.pretrain(pretrain_data.X, pretrain_data.y)\n']
             nb_cells.append(new_code_cell(source=code))
 
             # Alternative -- load pretrained sem from pickle file
@@ -255,7 +282,7 @@ def write(tests_to_run, test_datas):
         #
         code = ['# Run SEM\n',
                 '# \n',
-                'post, pe, log_lik, log_prior = sem.run(test_data.X, K=K, return_pe=True, return_lik_prior=True)\n']
+                '#post, pe, log_lik, log_prior = sem.run(test_data.X, K=K, return_pe=True, return_lik_prior=True)\n']
         nb_cells.append(new_code_cell(source=code))
 
         # Alternative -- load sem from pickle file
@@ -300,7 +327,8 @@ def write(tests_to_run, test_datas):
 if __name__ == "__main__":
     tests = []
 
-    # run tests
+    # generate tests
+    #
     for test in tests_to_run:
         test_name = test[0]
         pretrain_params = test[1]
@@ -316,12 +344,29 @@ if __name__ == "__main__":
 
         tests.append((pretrain_data, test_data)) # must do it before running them... otherwise it doesn't work
 
+    # save jupyter notebook before running tests (as some of them may fail...)
+    #
+    write(tests_to_run, tests)
+
+    # run tests
+    #
+    mis = []
+    rs = []
     for test_idx in range(len(tests)):
         pretrain_data = tests[test_idx][0]
         test_data = tests[test_idx][1]
         print '\n\n      Running ', test_data, '\n\n'
         mi, r = run_test(pretrain_data, test_data, test_idx)
+        mis.append(mi)
+        rs.append(r)
 
-    # save jupyter notebook
-    write(tests_to_run, tests)
+    # save summary results
+    #
+    results_filename = get_results_filename(None, 'summary')
+    print 'Saving summary results to file ', results_filename
+    res = {'tests_to_run': tests_to_run,
+           'tests': tests,
+           'mis': mis,
+           'rs': rs}
+    save_pickle(res, results_filename)
 
