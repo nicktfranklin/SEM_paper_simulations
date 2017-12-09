@@ -35,12 +35,11 @@ tests_to_run = [
 #    ('TwoAlternating2DGaussians', [], [100, 0.01]),
 #    ('TwoLinearDynamicalSystems', [], [100, 0.01]),
 #    ('MotionCaptureData', [], [10]),
-    ('CoffeeShopWorldData', [], [20, 2, 400]),
+#    ('CoffeeShopWorldData', [], [20, 2, 400]),
     ('CoffeeShopWorldData', [2, 2, 400], [20, 2, 400]),
     ('CoffeeShopWorldData', [4, 2, 400], [20, 2, 400]),
     ('CoffeeShopWorldData', [8, 2, 400], [20, 2, 400]),
     ('CoffeeShopWorldData', [10, 2, 400], [20, 2, 400]),
-    ('CoffeeShopWorldData', [20, 2, 400], [20, 2, 400]),
     ('CoffeeShopWorldData', [40, 2, 400], [20, 2, 400]),
     ('CoffeeShopWorldData', [80, 2, 400], [20, 2, 400])
 ]
@@ -140,6 +139,9 @@ def run_test(pretrain_data, test_data, test_idx):
         #sem.x_prev = None
 
         sem.pretrain(pretrain_data.X, pretrain_data.y)
+
+        sem.C[0] = 1000000000 # TODO FIXME NOTE rm -rf
+        sem.C[1] = 1000000000
    
         # save results
         results_filename = get_results_filename(test_idx, 'pretrain')
@@ -223,7 +225,7 @@ def write(tests_to_run, test_datas):
 
         # Load test data
         #
-        title = '# Running test ' + test_name + ' with params ' + ', '.join(test_params_str)
+        title = '# Running test #' + str(test_idx) + ': ' + test_name + ' with params ' + ', '.join(test_params_str)
         if pretrain_params:
             title = title + ' with pretraining params ' + ', '.join(pretrain_params_str)
         title = title + '\n'

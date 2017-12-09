@@ -42,7 +42,8 @@ class CoffeeShopWorldData(TestData):
         #        [(Punch, verb), (Tom, agent), (Charan, patient)] ]
         # events is e.g. [0 0 0 0 0 1 1 1 1 1 0 0 0 0]
         #
-        scenes, events = main(0, input_fnames, n_input_files, names_concat, n_iterations, n_repeats, write_to_files=False, stories_kwargs=stories_kwargs)
+        rand_seed = np.random.randint(10000000)
+        scenes, events = main(rand_seed, input_fnames, n_input_files, names_concat, n_iterations, n_repeats, write_to_files=False, stories_kwargs=stories_kwargs)
 
         print scenes[:20]
         print events[:20]
