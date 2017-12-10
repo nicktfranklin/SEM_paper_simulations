@@ -36,12 +36,61 @@ tests_to_run = [
 #    ('TwoLinearDynamicalSystems', [], [100, 0.01]),
 #    ('MotionCaptureData', [], [10]),
 #    ('CoffeeShopWorldData', [], [20, 2, 400]),
-    ('CoffeeShopWorldData', [2, 2, 400], [20, 2, 400]),
-    ('CoffeeShopWorldData', [4, 2, 400], [20, 2, 400]),
-    ('CoffeeShopWorldData', [8, 2, 400], [20, 2, 400]),
-    ('CoffeeShopWorldData', [10, 2, 400], [20, 2, 400]),
-    ('CoffeeShopWorldData', [40, 2, 400], [20, 2, 400]),
-    ('CoffeeShopWorldData', [80, 2, 400], [20, 2, 400])
+    ('CoffeeShopWorldData', [2, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [2, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [2, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [2, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [2, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [2, 2, 400], [2, 2, 400]),
+
+    ('CoffeeShopWorldData', [4, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [4, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [4, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [4, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [4, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [4, 2, 400], [2, 2, 400]),
+
+    ('CoffeeShopWorldData', [6, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [6, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [6, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [6, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [6, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [6, 2, 400], [2, 2, 400]),
+
+    ('CoffeeShopWorldData', [8, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [8, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [8, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [8, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [8, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [8, 2, 400], [2, 2, 400]),
+
+    ('CoffeeShopWorldData', [10, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [10, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [10, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [10, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [10, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [10, 2, 400], [2, 2, 400]),
+
+    ('CoffeeShopWorldData', [15, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [15, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [15, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [15, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [15, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [15, 2, 400], [2, 2, 400]),
+
+    ('CoffeeShopWorldData', [20, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [20, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [20, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [20, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [20, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [20, 2, 400], [2, 2, 400]),
+
+    ('CoffeeShopWorldData', [40, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [40, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [40, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [40, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [40, 2, 400], [2, 2, 400]),
+    ('CoffeeShopWorldData', [40, 2, 400], [2, 2, 400]),
 ]
 
 TOKEN = randstr(10) # random token for output filenames
@@ -233,19 +282,29 @@ def write(tests_to_run, test_datas):
 
         code = ['# Ensure reproducibility\n',
                 '#\n',
-                'np.random.seed(0)\n']
+                'np.random.seed(' + str(test_idx) + ')\n']
         nb_cells.append(new_code_cell(source=code))
 
+        # it is important that these two are back to back -- otherwise, some np.random might sneak in between them
+        # and screw up the test_data
         if pretrain_params:
             code = ['# Load pretrain data\n',
                     '# \n',
-                    'pretrain_data = ' + test_name + '(' + ','.join(pretrain_params_str) + ')\n',
-                    'pretrain_data.plot_scenes()\n']
+                    'pretrain_data = ' + test_name + '(' + ','.join(pretrain_params_str) + ')\n']
             nb_cells.append(new_code_cell(source=code))
-        
         code = ['# Load test data\n',
                 '# \n',
-                'test_data = ' + test_name + '(' + ','.join(test_params_str) + ')\n',
+                'test_data = ' + test_name + '(' + ','.join(test_params_str) + ')\n']
+        nb_cells.append(new_code_cell(source=code))
+
+        if pretrain_params:
+            code = ['# Plot pretrain data\n',
+                    '# \n',
+                    'pretrain_data.plot_scenes()\n']
+            nb_cells.append(new_code_cell(source=code))
+
+        code = ['# Plot test data\n',
+                '# \n',
                 'test_data.plot_scenes()\n']
         nb_cells.append(new_code_cell(source=code))
 
@@ -331,13 +390,19 @@ if __name__ == "__main__":
 
     # generate tests
     #
-    for test in tests_to_run:
+    for test_idx in range(len(tests_to_run)):
+        test = tests_to_run[test_idx]
         test_name = test[0]
         pretrain_params = test[1]
         test_params = test[2]
 
+        # for reproducibility -- note it's important NOT to call again before test_data (or it will generate identical pretrain and test data)
+        # also note we should also call in notebook
+        np.random.seed(test_idx)
+
         # generate test
-        np.random.seed(0) # for reproducibility -- note it's important NOT to call again before test_data (or it will generate identical pretrain and test data)
+        # it is important that these are back to back for reproducibility, lest some stray np.random
+        # sneaks in between them and screws things up
         if pretrain_params:
             pretrain_data = getattr(sys.modules[__name__], test_name)(*pretrain_params)
         else:
