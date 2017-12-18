@@ -184,6 +184,10 @@ class KerasLDS(EventModel):
 
         return self.model.predict(np.reshape(X0, newshape=(1, self.D)))
 
+    def predict_next_generative(self, X):
+        # the LDS is a markov model, so these functions are the same
+        return self.predict_next(X)
+
     def predict_f0(self):
         if self.is_visited:
             return self.predict_next(np.zeros(self.D))
@@ -255,6 +259,7 @@ class KerasSimpleRNN(KerasLDS):
         self.y_history = [np.zeros((0, self.D))]
 
         self._init_model()
+        self.n_epochs_trained = 0
 
     # initialize model once so we can then update it online
     #
@@ -300,7 +305,9 @@ class KerasSimpleRNN(KerasLDS):
         x_train = self._unroll(x_example)
         y_train = y_example
 
-        h = self.model.fit(x_train, y_train, verbose=0, epochs=self.n_epochs, shuffle=False)
+        h = self.model.fit(x_train, y_train, verbose=0, initial_epoch=self.n_epochs_trained,
+                           epochs=self.n_epochs + self.n_epochs_trained, shuffle=False)
+        self.n_epochs_trained += self.n_epochs  # keep track that we have already done training on the models
 
         self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
         self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
@@ -309,6 +316,8 @@ class KerasSimpleRNN(KerasLDS):
 
     # predict a single example
     def predict_next(self, X):
+        # Note: this function predicts the next conditioned on the training data the model has seen
+
         if X.ndim > 1:
             X = X[-1, :]  # only consider last example
         assert np.ndim(X) == 1
@@ -322,6 +331,11 @@ class KerasSimpleRNN(KerasLDS):
         x_test = self._unroll(x_test)
 
         return self.model.predict(x_test)
+
+    def predict_next_generative(self, X):
+        X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.D))
+        return self.model.predict(X0)
+
 
     # create a new cluster of scenes
     def new_cluster(self):
