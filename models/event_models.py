@@ -84,7 +84,14 @@ class LinearDynamicSystem(EventModel):
         Y_hat: np.array of length D
             prediction of vector at time t+1
         """
-        Y_hat = self.beta + np.matmul(X, self.W)
+
+        # these models are not recurssive
+        if X.ndim > 1:
+            X0 = X[-1, :]
+        else:
+            X0 = X
+
+        Y_hat = self.beta + np.matmul(X0, self.W)
         return Y_hat
 
     def update(self, X, Y):
@@ -170,8 +177,12 @@ class KerasLDS(EventModel):
         y: 1xD array of prediction vectors
 
         """
+        if X.ndim > 1:
+            X0 = X[-1, :]
+        else:
+            X0 = X
 
-        return self.model.predict(np.reshape(X, newshape=(N, self.D)))
+        return self.model.predict(np.reshape(X0, newshape=(1, self.D)))
 
     def predict_f0(self):
         if self.is_visited:
