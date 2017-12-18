@@ -41,6 +41,8 @@ class SEM(object):
         self.f_class = f_class
         self.f_opts = f_opts
 
+        self.event_models = dict()
+
     def run(self, X, K=None, return_pe=False, return_err=False, return_lik_prior=False):
         """
         Parameters
@@ -155,6 +157,9 @@ class SEM(object):
         # after all of the training, close the models!
         for m in event_models.itervalues():
             m.close()
+
+        # cache the event models for future use (e.g. with the memory model)
+        self.event_models = event_models
 
         if return_pe:
             if return_lik_prior:
