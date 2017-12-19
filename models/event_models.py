@@ -136,7 +136,7 @@ class KerasLDS(EventModel):
                 'decay': 0.0001
             }
 
-        self.compile_opts = dict(optimizer=optimizers.SGD(**sgd_kwargs), loss='mean_squared_error')
+        self.compile_opts = dict(optimizer=optimizers.SGD(**sgd_kwargs), loss='mean_squared_error',)
         self.n_epochs = n_epochs
 
         self.is_visited = False  # governs the special case of model's first prediction (i.e. with no experience)
@@ -156,6 +156,22 @@ class KerasLDS(EventModel):
 
         self.model.compile(**self.compile_opts)
 
+    def reestimate(self):
+        self._init_model()
+        self.estimate()
+
+    def append_observation(self, X, Y):
+        if np.ndim(X) == 1:
+            N = 1
+        else:
+            N, _ = np.shape(X)
+        self.x_train = np.concatenate([self.x_train, np.reshape(X, newshape=(N, self.D))])
+        self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(N, self.D))])
+
+    def estimate(self):
+        self.model.fit(self.x_train, self.y_train, verbose=0, epochs=self.n_epochs, shuffle=True)
+
+
     def update(self, X, Y):
         if np.ndim(X) == 1:
             N = 1
@@ -163,7 +179,7 @@ class KerasLDS(EventModel):
             N, _ = np.shape(X)
         self.x_train = np.concatenate([self.x_train, np.reshape(X, newshape=(N, self.D))])
         self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(N, self.D))])
-        self.model.fit(self.x_train, self.y_train, verbose=0, nb_epoch=self.n_epochs)
+        self.estimate()
         self.is_visited = True
 
     def predict_next(self, X):
@@ -227,7 +243,7 @@ class KerasSimpleRNN(KerasLDS):
 #
 
     def __init__(self, D, t=5, n_hidden1=10, n_hidden2=10, hidden_act1='relu', hidden_act2='relu',
-                 sgd_kwargs=None, n_epochs=50, dropout=0.50, l2_regularization=0.01):
+                 sgd_kwargs=None, n_epochs=50, dropout=0.50, l2_regularization=0.01, batch_size=32):
         #
         # D = dimension of single input / output example
         # t = number of time steps to unroll back in time for the recurrent layer
@@ -259,7 +275,7 @@ class KerasSimpleRNN(KerasLDS):
         self.y_history = [np.zeros((0, self.D))]
 
         self._init_model()
-        self.n_epochs_trained = 0
+        self.batch_size = batch_size
 
     # initialize model once so we can then update it online
     #
@@ -302,17 +318,20 @@ class KerasSimpleRNN(KerasLDS):
         # so a single training "example" = the last t training examples
         # notice there is still only one target label
         #
-        x_train = self._unroll(x_example)
-        y_train = y_example
-
-        h = self.model.fit(x_train, y_train, verbose=0, initial_epoch=self.n_epochs_trained,
-                           epochs=self.n_epochs + self.n_epochs_trained, shuffle=False)
-        self.n_epochs_trained += self.n_epochs  # keep track that we have already done training on the models
+        # x_train = self._unroll(x_example)
+        # y_train = y_example
+        #
+        # h = self.model.fit(x_train, y_train, verbose=0, initial_epoch=self.n_epochs_trained,
+        #                    epochs=self.n_epochs + self.n_epochs_trained, shuffle=False)
+        # self.n_epochs_trained += self.n_epochs  # keep track that we have already done training on the models
 
         self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
         self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
+
+        self.batch()
+
         self.is_visited = True
-        return h
+
 
     # predict a single example
     def predict_next(self, X):
@@ -336,6 +355,11 @@ class KerasSimpleRNN(KerasLDS):
         X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.D))
         return self.model.predict(X0)
 
+    def predict_f0(self):
+        if self.is_visited:
+            return self.predict_next_generative(np.zeros(self.D))
+        return np.zeros(self.D)
+
 
     # create a new cluster of scenes
     def new_cluster(self):
@@ -347,10 +371,28 @@ class KerasSimpleRNN(KerasLDS):
 
     # optional: run batch gradient descent on all past event clusters
     def batch(self):
-        for clust_id in range(len(self.x_history)):
-            x_train = unroll_data(self.x_history[clust_id], self.t)
-            y_train = self.y_history[clust_id]
-            h = self.model.fit(x_train, y_train, verbose=0, epochs=self.n_epochs, shuffle=False)
+        # run batch gradient descent on all of the past events!
+        for _ in range(self.n_epochs):
+
+            # draw a set of training examples from the history
+            x_batch = []
+            y_batch = []
+            for _ in range(self.batch_size):
+                # draw a random cluster for the history
+                clust_id = np.random.randint(len(self.x_history))
+                x_history = self.x_history[clust_id]
+                y_history = self.y_history[clust_id]
+
+                t = np.random.randint(len(x_history))
+                
+                x_batch.append(np.reshape(
+                    unroll_data(x_history[max(t - self.t, 0):t + 1, :], self.t)[-1, :, :], (1, self.t, self.D)
+                ))
+                y_batch.append(y_history[t, :])
+
+            x_batch = np.reshape(x_batch, (self.batch_size, self.t, self.D))
+            y_batch = np.reshape(y_batch, (self.batch_size, 2))
+            self.model.train_on_batch(x_batch, y_batch)
 
 
 class KerasGRU(KerasSimpleRNN):
