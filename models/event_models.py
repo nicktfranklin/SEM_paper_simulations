@@ -124,19 +124,20 @@ class LinearDynamicSystem(EventModel):
 
 class KerasLDS(EventModel):
 
-    def __init__(self, D, sgd_kwargs=None, n_epochs=50, init_model=True):
+    def __init__(self, D, optimizer=None, n_epochs=50, init_model=True):
         EventModel.__init__(self, D)
         self.x_train = np.zeros((0, self.D))  # initialize empty arrays
         self.y_train = np.zeros((0, self.D))
-        if sgd_kwargs is None:
+        if optimizer is None:
             sgd_kwargs = {
                 'nesterov': True,
                 'lr': 0.1,
                 'momentum': 0.5,
                 'decay': 0.0001
             }
+            optimizer = optimizers.SGD(**sgd_kwargs)
 
-        self.compile_opts = dict(optimizer=optimizers.SGD(**sgd_kwargs), loss='mean_squared_error',)
+        self.compile_opts = dict(optimizer=optimizer, loss='mean_squared_error', )
         self.n_epochs = n_epochs
 
         self.is_visited = False  # governs the special case of model's first prediction (i.e. with no experience)
@@ -217,8 +218,8 @@ class KerasLDS(EventModel):
 
 class KerasMultiLayerPerceptron(KerasLDS):
 
-    def __init__(self, D, n_hidden=None, hidden_act='tanh', sgd_kwargs=None, n_epochs=50, l2_regularization=0.01):
-        KerasLDS.__init__(self, D, sgd_kwargs=sgd_kwargs, init_model=False)
+    def __init__(self, D, n_hidden=None, hidden_act='tanh', optimizer=None, n_epochs=50, l2_regularization=0.01):
+        KerasLDS.__init__(self, D, optimizer=optimizer, init_model=False)
         if n_hidden is None:
             n_hidden = D
         self.n_hidden = n_hidden
@@ -243,7 +244,8 @@ class KerasSimpleRNN(KerasLDS):
 #
 
     def __init__(self, D, t=5, n_hidden1=10, n_hidden2=10, hidden_act1='relu', hidden_act2='relu',
-                 sgd_kwargs=None, n_epochs=50, dropout=0.50, l2_regularization=0.01, batch_size=32):
+                 optimizer=None, n_epochs=50, dropout=0.50, l2_regularization=0.01, batch_size=32,
+                 kernel_initializer='glorot_uniform'):
         #
         # D = dimension of single input / output example
         # t = number of time steps to unroll back in time for the recurrent layer
@@ -255,7 +257,7 @@ class KerasSimpleRNN(KerasLDS):
         # n_epochs = how many gradient descent steps to perform for each training batch
         # dropout = what fraction of nodes to drop out during training (to prevent overfitting)
 
-        KerasLDS.__init__(self, D, sgd_kwargs=sgd_kwargs, init_model=False)
+        KerasLDS.__init__(self, D, optimizer=optimizer, init_model=False)
 
         self.t = t
         self.n_epochs = n_epochs
@@ -266,6 +268,7 @@ class KerasSimpleRNN(KerasLDS):
         self.D = D
         self.dropout = dropout
         self.kernel_regularizer = regularizers.l2(l2_regularization)
+        self.kernel_initializer = kernel_initializer
 
         # list of clusters of scenes:
         # each element of list = history of scenes for given cluster
@@ -285,10 +288,13 @@ class KerasSimpleRNN(KerasLDS):
         self.model = Sequential()
         # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.D-dimensional vector
-        self.model.add(SimpleRNN(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
-        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2, kernel_regularizer=self.kernel_regularizer))
+        self.model.add(SimpleRNN(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1,
+                                 kernel_initializer=self.kernel_initializer))
+        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2, kernel_regularizer=self.kernel_regularizer,
+                             kernel_initializer=self.kernel_initializer))
         self.model.add(Dropout(self.dropout))
-        self.model.add(Dense(self.D, activation=None,  kernel_regularizer=self.kernel_regularizer))
+        self.model.add(Dense(self.D, activation=None,  kernel_regularizer=self.kernel_regularizer,
+                             kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
 
     # concatenate current example with the history of the last t-1 examples
@@ -302,7 +308,7 @@ class KerasSimpleRNN(KerasLDS):
 
     # train on a single example
     #
-    def update(self, X, Y):
+    def update(self, X, Y, update_estimate=True):
         if X.ndim > 1:
             X = X[-1, :]  # only consider last example
         assert X.ndim == 1
@@ -328,7 +334,8 @@ class KerasSimpleRNN(KerasLDS):
         self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
         self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
 
-        self.batch()
+        if update_estimate:
+            self.batch()
 
         self.is_visited = True
 
@@ -391,7 +398,7 @@ class KerasSimpleRNN(KerasLDS):
                 y_batch.append(y_history[t, :])
 
             x_batch = np.reshape(x_batch, (self.batch_size, self.t, self.D))
-            y_batch = np.reshape(y_batch, (self.batch_size, 2))
+            y_batch = np.reshape(y_batch, (self.batch_size, self.D))
             self.model.train_on_batch(x_batch, y_batch)
 
 

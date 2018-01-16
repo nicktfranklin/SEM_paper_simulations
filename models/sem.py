@@ -83,7 +83,6 @@ class SEM(object):
         k_prev = None # last event type
         # X_curr = X[0, :]
         post = np.zeros((N, K))
-        k_active = None
 
         # debugging function
         if return_lik_prior:
@@ -117,7 +116,7 @@ class SEM(object):
                 # get the log likelihood for each event model
                 model = event_models[k]
 
-                if k == k_active:
+                if k == k_prev:
                     Y_hat = model.predict_next(X_prev)
                 else:
                     Y_hat = model.predict_f0()
