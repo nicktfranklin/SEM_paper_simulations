@@ -174,6 +174,9 @@ Run a single test with given TestData object
 def run_test(pretrain_data, test_data, test_idx):
     # set the parameters for the models
     # TODO because we use D to define the parameters, we cannot fully decouple the parameters from the data set. So we have a chicken or egg problem here. Ideally, the user should be able to pass Omega and test_data here and they should be independent. For now, they're not
+    # TODO because we use D to define the parameters, we cannot fully decouple the parameters
+    # (cont) from the data set. So we have a chicken or egg problem here. Ideally, the user should be able to pass
+    # (cont) Omega and test_data here and they should be independent. For now, they're not
     Omega = get_Omega(test_data.D)
   
     K = test_data.X.shape[0]

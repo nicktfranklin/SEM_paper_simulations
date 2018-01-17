@@ -144,8 +144,8 @@ class SEM(object):
 
         # loop over all scenes
         #
-        for n in tnrange(N):
-            print 'pretraining at scene ', n
+        for n in tnrange(N, desc='Pretraining'):
+            # print 'pretraining at scene ', n
 
             x_curr = X[n, :].copy() # current scene
             k = y[n] # current event
@@ -231,7 +231,7 @@ class SEM(object):
             log_like = np.zeros((N, self.K))
             log_prior = np.zeros((N, self.K))
 
-        print 'Running SEM on', N, 'scenes of dimension', self.D, 'with a maximum of', self.K, 'event types'
+        # print 'Running SEM on', N, 'scenes of dimension', self.D, 'with a maximum of', self.K, 'event types'
 
         for n in tnrange(N):
             x_curr = X[n, :].copy()
@@ -297,8 +297,8 @@ class SEM(object):
                 self.event_models[k].new_cluster()
                 self.event_models[k].update_f0(x_curr)
 
-            print self.C[0:np.max(active)+1]
-            print 'scene ', n, ' map = ', k, ' prior = ', prior[0:np.max(active)+1], ', lik = ', lik, ' post = ', post[n,0:np.max(active)+1]
+            # print self.C[0:np.max(active)+1]
+            # print 'scene ', n, ' map = ', k, ' prior = ', prior[0:np.max(active)+1], ', lik = ', lik, ' post = ', post[n,0:np.max(active)+1]
 
             self.x_prev = x_curr  # store the current scene for next trial
             self.k_prev = k # store the current event for the next trial
