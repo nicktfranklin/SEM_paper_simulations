@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 from scipy.misc import logsumexp
-from tqdm import tnrange
+from tqdm import tqdm_notebook
 from scipy.stats import multivariate_normal as mvnormal
 from keras.models import model_from_json
 import copy
@@ -47,7 +47,8 @@ class SEM(object):
         # SEM internal state
         #
         self.K = 0 # maximum number of clusters (event types)
-        self.C = np.array([]) # running count of the clustering process = number of scenes for each event type (the CRP prior)
+        self.C = np.array([]) # running count of the clustering process = n of scenes
+                              # for each event type (the CRP prior)
         self.D = None # dimension of scenes
         self.event_models = dict() # event model for each event type
 
@@ -77,7 +78,8 @@ class SEM(object):
                     # save model weights to a separate HDF5 file
                     # TODO that's pretty lame but that's the easiest way I could do it. Should probably make this better
                     # https://machinelearningmastery.com/save-load-keras-deep-learning-models/
-                    event_model.weights_filename = os.path.join(weights_dir, 'event_model_weights_' + randstr(10) + '.h5')
+                    event_model.weights_filename = os.path.join\
+                        (weights_dir, 'event_model_weights_' + randstr(10) + '.h5')
                     event_model.model.save_weights(event_model.weights_filename)
 
                     print '           saving event model ', k, event_model, ' to ', event_model.weights_filename
@@ -108,7 +110,8 @@ class SEM(object):
         for attr_name in get_object_attributes(self):
             if attr_name == 'event_models':
                 D = dump['D']
-                dummy_event_model = self.f_class(D, **self.f_opts) # dummy event model to get the keras optimizer (can't serialize it)
+                dummy_event_model = self.f_class(D, **self.f_opts) # dummy event model to get the keras
+                                                                   # optimizer (can't serialize it)
 
                 event_dump = dump['event_models']
                 for k, event_model in event_dump.iteritems():
@@ -118,7 +121,8 @@ class SEM(object):
                     event_model.sess = tf.Session() # restart TF session for model
                     event_model.model = model_from_json(event_model.model) # restore model structure from json
                     event_model.model.load_weights(event_model.weights_filename) # restore model weights from HDF5
-                    event_model.model.compile(**dummy_event_model.compile_opts) # compile model using dummy event model options (can't serialize them)
+                    event_model.model.compile(**dummy_event_model.compile_opts) # compile model using dummy event model
+                    #  options (can't serialize them)
 
                     self.event_models[k] = event_model
             else:
@@ -126,8 +130,7 @@ class SEM(object):
                 setattr(self, attr_name, dump[attr_name])
 
 
-
-    def pretrain(self, X, y):
+    def pretrain(self, X, y, progress_bar=True, leave_progress_bar=True):
         """
         Pretrain a bunch of event models on sequence of scenes X
         with corresponding event labels y, assumed to be between 0 and K-1
@@ -143,8 +146,15 @@ class SEM(object):
         N = X.shape[0]
 
         # loop over all scenes
+        if progress_bar:
+            def my_it(N):
+                return tqdm_notebook(range(N), desc='Pretraining', leave=leave_progress_bar)
+        else:
+            def my_it(N):
+                return range(N)
+
         #
-        for n in tnrange(N, desc='Pretraining'):
+        for n in my_it(N):
             # print 'pretraining at scene ', n
 
             x_curr = X[n, :].copy() # current scene
@@ -192,7 +202,8 @@ class SEM(object):
         assert self.C.size == self.K
 
 
-    def run(self, X, K=None, return_pe=False, return_err=False, return_lik_prior=False):
+    def run(self, X, K=None, return_pe=False, return_err=False, return_lik_prior=False,
+            progress_bar=True, leave_progress_bar=True, list_event_boundaries=None):
         """
         Parameters
         ----------
@@ -207,6 +218,9 @@ class SEM(object):
 
         return_lik_prior: bool
             return the model's log likelihood and log prior over clusterings
+
+        list_event_boundaries: list
+            this is an boolean list of length N that specifies external boundaries by the agent
 
         Return
         ------
@@ -231,10 +245,22 @@ class SEM(object):
             log_like = np.zeros((N, self.K))
             log_prior = np.zeros((N, self.K))
 
-        # print 'Running SEM on', N, 'scenes of dimension', self.D, 'with a maximum of', self.K, 'event types'
+        event_boundary = True #  boolean variable that identifies if there has been an event boundary
+                # this doesn't necessarily mean a different event type (i.e.cluster)
 
-        for n in tnrange(N):
+        if progress_bar:
+            def my_it(N):
+                return tqdm_notebook(range(N), desc='Run SEM', leave=leave_progress_bar)
+        else:
+            def my_it(N):
+                return range(N)
+
+        for n in my_it(N):
             x_curr = X[n, :].copy()
+
+            # look for experimenter supplied boundaries
+            if list_event_boundaries is not None:
+                event_boundary = list_event_boundaries[n]
 
             # calculate sCRP prior
             prior = self.C.copy()
@@ -260,7 +286,11 @@ class SEM(object):
                 # get the log likelihood for each event model
                 model = self.event_models[k]
 
-                if k == self.k_prev:
+                if k != self.k_prev:
+                    # detect event boundaries. This is stub code to allow for experimenter signalling of boundaries
+                    event_boundary = True  # N.B this overrides the experimenter provided boundaries
+
+                if not event_boundary:
                     assert self.x_prev is not None
                     Y_hat = model.predict_next(self.x_prev)
                 else:
@@ -288,7 +318,7 @@ class SEM(object):
             self.C[k] += 1  # update counts
 
             # update event model
-            if self.k_prev == k:
+            if not event_boundary:
                 # we're in the same event -> update using previous scene
                 assert self.x_prev is not None
                 self.event_models[k].update(self.x_prev, x_curr)
@@ -297,11 +327,9 @@ class SEM(object):
                 self.event_models[k].new_cluster()
                 self.event_models[k].update_f0(x_curr)
 
-            # print self.C[0:np.max(active)+1]
-            # print 'scene ', n, ' map = ', k, ' prior = ', prior[0:np.max(active)+1], ', lik = ', lik, ' post = ', post[n,0:np.max(active)+1]
-
             self.x_prev = x_curr  # store the current scene for next trial
             self.k_prev = k # store the current event for the next trial
+            event_boundary = False
 
         if return_pe:
             if return_lik_prior:

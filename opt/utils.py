@@ -35,7 +35,7 @@ def generate_random_events(n_events, data_file=None):
     return np.concatenate(X), np.concatenate(y)
 
 
-def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False, split_post=False,
+def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False, split_post=False, list_event_boundaries=None,
              semclass=models.SEM):
     """
 
@@ -66,12 +66,14 @@ def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False, split_po
 
     if return_pe:
         if split_post:
-            post, pe, log_lik, log_prior = sem.run(X, K=K, return_pe=True, return_lik_prior=True)
+            post, pe, log_lik, log_prior = sem.run(X, K=K, return_pe=True, return_lik_prior=True,
+                                                   list_event_boundaries=list_event_boundaries)
         else:
             post, pe = sem.run(X, K=K, return_pe=True)
     else:
         if split_post:
-            post, _, log_lik, log_prior = sem.run(X, K=K, return_pe=True, return_lik_prior=True)
+            post, _, log_lik, log_prior = sem.run(X, K=K, return_pe=True, return_lik_prior=True,
+                                                  list_event_boundaries=list_event_boundaries)
         else:
             post = sem.run(X, K=K)
 

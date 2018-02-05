@@ -43,7 +43,8 @@ class CoffeeShopWorldData(TestData):
         # events is e.g. [0 0 0 0 0 1 1 1 1 1 0 0 0 0]
         #
         rand_seed = np.random.randint(10000000)
-        scenes, events = main(rand_seed, input_fnames, n_input_files, names_concat, n_iterations, n_repeats, write_to_files=False, stories_kwargs=stories_kwargs)
+        scenes, events = main(rand_seed, input_fnames, n_input_files, names_concat, n_iterations, n_repeats,
+                              write_to_files=False, stories_kwargs=stories_kwargs)
 
         print scenes[:20]
         print events[:20]
@@ -57,21 +58,18 @@ class CoffeeShopWorldData(TestData):
         print 'Fillers: ', filler_library
 
         # figure out how many dimensions we need for HRR embeddings
-        #
-        n = len(role_library) + len(filler_library);     # vocabulary size
-        k = 8;      # maximum number of terms to be combined
-        err = 0.01; # error probability
+        n = len(role_library) + len(filler_library)    # vocabulary size
+        k = 8      # maximum number of terms to be combined
+        err = 0.01 # error probability
         if D is None:
             # optionally pass D; it is useful e.g. for pretraining 
-            D = plate_formula(n, k, err);
+            D = plate_formula(n, k, err)
 
         # create a library of vectors
-        #
         role_dict = {r: embed(1, D) for r in role_library}
         filler_dict = {f: embed(1, D) for f in filler_library}
 
         # embed the scenes
-        #
         embedded_scenes = []
         for scene in scenes:
             bound = [encode(filler_dict[filler], role_dict[role]) for filler, role in scene]

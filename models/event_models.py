@@ -45,6 +45,10 @@ class EventModel(object):
     def predict_f0(self):
         return np.zeros(self.D)
 
+    def predict_next_generative(self, X):
+        X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.D))
+        return self.predict_next(X0)
+
     def update_f0(self, Y):
         pass
 
@@ -53,6 +57,16 @@ class EventModel(object):
 
     def new_cluster(self):
         pass
+
+    def run_generative(self, n_steps, initial_point=None):
+        if initial_point is None:
+            x_gen = self.predict_f0()
+        else:
+            x_gen = np.reshape(initial_point, (1, self.D))
+        for ii in range(1, n_steps):
+            x_gen = np.concatenate([x_gen, self.predict_next_generative(x_gen[:ii, :])])
+        return x_gen
+
 
 
 class LinearDynamicSystem(EventModel):
@@ -211,10 +225,8 @@ class KerasLDS(EventModel):
         return np.zeros(self.D)
 
     def update_f0(self, Y):
-        # eta = 1. / (1.0 + self.f0_count)
-        # self.f0 += eta * (Y - self.f0)
-        # self.f0_count += 1.0
         self.update(np.zeros(self.D), Y)
+
 
 class KerasMultiLayerPerceptron(KerasLDS):
 
@@ -239,9 +251,8 @@ class KerasMultiLayerPerceptron(KerasLDS):
 
 class KerasSimpleRNN(KerasLDS):
 
-# RNN which is initialized once and then trained using stochastic gradient descent
-# i.e. each new scene is a single example batch of size 1
-#
+    # RNN which is initialized once and then trained using stochastic gradient descent
+    # i.e. each new scene is a single example batch of size 1
 
     def __init__(self, D, t=5, n_hidden1=10, n_hidden2=10, hidden_act1='relu', hidden_act2='relu',
                  optimizer=None, n_epochs=50, dropout=0.50, l2_regularization=0.01, batch_size=32,
