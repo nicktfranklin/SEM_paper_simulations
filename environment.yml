@@ -1,10 +1,15 @@
 name: sem
+channels:
+  - conda-forge
+  - defaults
 dependencies:
   - python=2.7
   - anaconda
   - seaborn
+  - ipywidgets
+  - tqdm
+  - scikit-learn
   - pip:
-      - tqdm
       - tensorflow
       - keras
       - edward
