@@ -7,6 +7,10 @@ from keras.models import model_from_json
 import copy
 import os
 
+class Results(object):
+    """ placeholder object to store results """
+    pass
+
 class SEM(object):
     """
     This port of SAM's code (done with a different programming logic)
@@ -55,6 +59,8 @@ class SEM(object):
         self.x_prev = None # last scene
         self.k_prev = None # last event type
 
+        # instead of dumping the results, store them to the object
+        self.results = None
 
     def serialize(self, weights_dir='.'):
         """
@@ -99,7 +105,6 @@ class SEM(object):
 
         return dump
 
-
     def deserialize(self, dump):
         """
         Deserialize SEM object after it has been serialized with serialize().
@@ -128,7 +133,6 @@ class SEM(object):
             else:
                 print '      setting ', attr_name, ' to ', dump[attr_name]
                 setattr(self, attr_name, dump[attr_name])
-
 
     def pretrain(self, X, y, progress_bar=True, leave_progress_bar=True):
         """
@@ -171,14 +175,13 @@ class SEM(object):
                 self.event_models[k].update(self.x_prev, x_curr)
             else:
                 # we're in a new event -> update the initialization point only
-                self.event_models[k].new_cluster()
+                self.event_models[k].new_token()
                 self.event_models[k].update_f0(x_curr)
 
             self.C[k] += 1  # update counts
 
             self.x_prev = x_curr  # store the current scene for next trial
             self.k_prev = k # store the current event for the next trial
-
 
     def update_state(self, X, K=None):
         """
@@ -202,8 +205,7 @@ class SEM(object):
         assert self.C.size == self.K
 
 
-    def run(self, X, K=None, return_pe=False, return_err=False, return_lik_prior=False,
-            progress_bar=True, leave_progress_bar=True, list_event_boundaries=None):
+    def run(self, X, K=None, progress_bar=True, leave_progress_bar=True, list_event_boundaries=None):
         """
         Parameters
         ----------
@@ -235,19 +237,18 @@ class SEM(object):
 
         Sigma = np.eye(self.D) * self.beta  # noise for multivariate gaussian likelihood
 
-        if return_pe:
-            pe = np.zeros(np.shape(X)[0])
-
+        # initialize arrays
         post = np.zeros((N, self.K))
+        pe = np.zeros(np.shape(X)[0])
+        # debugging functions
+        log_like = np.zeros((N, self.K))
+        log_prior = np.zeros((N, self.K))
 
-        # debugging function
-        if return_lik_prior:
-            log_like = np.zeros((N, self.K))
-            log_prior = np.zeros((N, self.K))
 
         event_boundary = True #  boolean variable that identifies if there has been an event boundary
                 # this doesn't necessarily mean a different event type (i.e.cluster)
 
+        # this code just controls the presence/absence of a progress bar -- it isn't important
         if progress_bar:
             def my_it(N):
                 return tqdm_notebook(range(N), desc='Run SEM', leave=leave_progress_bar)
@@ -286,9 +287,9 @@ class SEM(object):
                 # get the log likelihood for each event model
                 model = self.event_models[k]
 
+                # detect event boundaries when there is a change
                 if k != self.k_prev:
-                    # detect event boundaries. This is stub code to allow for experimenter signalling of boundaries
-                    event_boundary = True  # N.B this overrides the experimenter provided boundaries
+                    event_boundary = True  # N.B this allows for experimenter override
 
                 if not event_boundary:
                     assert self.x_prev is not None
@@ -303,14 +304,13 @@ class SEM(object):
             # update
 
             # this is a diagnostic readout and does not effect the model
-            if return_lik_prior:
-                log_like[n, :len(active)] = lik - np.max(lik)
-                log_prior[n, :len(active)] = np.log(prior[:len(active)])
+            log_like[n, :len(active)] = lik - np.max(lik)
+            log_prior[n, :len(active)] = np.log(prior[:len(active)])
 
             k = np.argmax(post[n, :])  # MAP cluster
 
             # prediction error: euclidean distance of the last model and the current scene vector
-            if return_pe and n > 0:
+            if n > 0:
                 assert self.x_prev is not None and self.k_prev is not None
                 model = self.event_models[self.k_prev]
                 pe[n] = np.linalg.norm(x_curr - model.predict_next(self.x_prev))
@@ -324,20 +324,19 @@ class SEM(object):
                 self.event_models[k].update(self.x_prev, x_curr)
             else:
                 # we're in a new event -> update the initialization point only
-                self.event_models[k].new_cluster()
+                self.event_models[k].new_token()
                 self.event_models[k].update_f0(x_curr)
 
             self.x_prev = x_curr  # store the current scene for next trial
             self.k_prev = k # store the current event for the next trial
             event_boundary = False
 
-        if return_pe:
-            if return_lik_prior:
-                return post, pe, log_like, log_prior
-            return post, pe
-
-        if return_lik_prior:
-            return post, None, log_like, log_prior
+        self.results = Results()
+        self.results.post = post
+        self.results.pe = pe
+        self.results.log_like = log_like
+        self.results.log_prior = log_prior
+        self.results.e_hat = np.argmax(post, axis=1)
 
         return post
 

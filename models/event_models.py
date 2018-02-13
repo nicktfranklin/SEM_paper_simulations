@@ -45,18 +45,18 @@ class EventModel(object):
     def predict_f0(self):
         return np.zeros(self.D)
 
-    def predict_next_generative(self, X):
-        X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.D))
-        return self.predict_next(X0)
-
     def update_f0(self, Y):
         pass
 
     def close(self):
         pass
 
-    def new_cluster(self):
+    def new_token(self):
         pass
+
+    def predict_next_generative(self, X):
+        X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.D))
+        return self.predict_next(X0)
 
     def run_generative(self, n_steps, initial_point=None):
         if initial_point is None:
@@ -66,7 +66,6 @@ class EventModel(object):
         for ii in range(1, n_steps):
             x_gen = np.concatenate([x_gen, self.predict_next_generative(x_gen[:ii, :])])
         return x_gen
-
 
 
 class LinearDynamicSystem(EventModel):
@@ -330,17 +329,7 @@ class KerasSimpleRNN(KerasLDS):
         x_example = X.reshape((1, self.D))
         y_example = Y.reshape((1, self.D))
 
-        # concatenate current example with history of last t-1 examples
-        # this is for the recurrent part of the network
-        # so a single training "example" = the last t training examples
-        # notice there is still only one target label
-        #
-        # x_train = self._unroll(x_example)
-        # y_train = y_example
-        #
-        # h = self.model.fit(x_train, y_train, verbose=0, initial_epoch=self.n_epochs_trained,
-        #                    epochs=self.n_epochs + self.n_epochs_trained, shuffle=False)
-        # self.n_epochs_trained += self.n_epochs  # keep track that we have already done training on the models
+        # concatenate the training example to the active event token
 
         self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
         self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
@@ -364,7 +353,6 @@ class KerasSimpleRNN(KerasLDS):
 
         # concatenate current example with history of last t-1 examples
         # this is for the recurrent part of the network
-        #
         x_test = self._unroll(x_test)
 
         return self.model.predict(x_test)
@@ -380,7 +368,7 @@ class KerasSimpleRNN(KerasLDS):
 
 
     # create a new cluster of scenes
-    def new_cluster(self):
+    def new_token(self):
         if len(self.x_history) == 1 and self.x_history[0].shape[0] == 0:
             # special case for the first cluster which is already created
             return 
@@ -425,3 +413,64 @@ class KerasGRU(KerasSimpleRNN):
         self.model.add(Dropout(self.dropout))
         self.model.add(Dense(self.D, activation=None,  kernel_regularizer=self.kernel_regularizer))
         self.model.compile(**self.compile_opts)
+
+
+class CustomGRU(EventModel):
+
+    """ this is the base clase of the event model """
+
+    def __init__(self, D):
+        self.D = D
+
+    def update(self, X, Y):
+        """
+        Parameters
+        ----------
+        X: NxD array-like data of inputs
+
+        y: NxD array-like data of outputs
+
+        Returns
+        -------
+        None
+
+        """
+        pass
+
+    def predict_next(self, X):
+        """
+        Parameters
+        ----------
+        X: 1xD array-like data of inputs
+
+        Returns
+        -------
+        y: 1xD array of prediction vectors
+
+        """
+        return np.copy(X)
+
+    def predict_f0(self):
+        return np.zeros(self.D)
+
+    def predict_next_generative(self, X):
+        X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.D))
+        return self.predict_next(X0)
+
+    def update_f0(self, Y):
+        pass
+
+    def close(self):
+        pass
+
+    def new_token(self):
+        pass
+
+    def run_generative(self, n_steps, initial_point=None):
+        if initial_point is None:
+            x_gen = self.predict_f0()
+        else:
+            x_gen = np.reshape(initial_point, (1, self.D))
+        for ii in range(1, n_steps):
+            x_gen = np.concatenate([x_gen, self.predict_next_generative(x_gen[:ii, :])])
+        return x_gen

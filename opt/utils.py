@@ -27,16 +27,20 @@ def generate_random_events(n_events, data_file=None):
 
     X = []
     y = []
+    p_prev = -1
     for _ in range(n_events):
-        p = np.random.randint(n_patterns)
+        while True:
+            p = np.random.randint(n_patterns)
+            if p != p_prev:
+                p_prev = p
+                break
         e = motion_data.loc[motion_data.EventNumber == p, :].values[:, :-1]
         X.append(e)
         y.append([p] * e.shape[0])
     return np.concatenate(X), np.concatenate(y)
 
 
-def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False, split_post=False, list_event_boundaries=None,
-             semclass=models.SEM):
+def evaluate(X, y, Omega, K=None, number=0, save=False, list_event_boundaries=None):
     """
 
     Parameters
@@ -59,25 +63,14 @@ def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False, split_po
         r: int, adjusted rand score
     """
 
-    sem = semclass(**Omega)
+    sem = models.SEM(**Omega)
 
     if K is None:
         K = X.shape[0] / 2
 
-    if return_pe:
-        if split_post:
-            post, pe, log_lik, log_prior = sem.run(X, K=K, return_pe=True, return_lik_prior=True,
-                                                   list_event_boundaries=list_event_boundaries)
-        else:
-            post, pe = sem.run(X, K=K, return_pe=True)
-    else:
-        if split_post:
-            post, _, log_lik, log_prior = sem.run(X, K=K, return_pe=True, return_lik_prior=True,
-                                                  list_event_boundaries=list_event_boundaries)
-        else:
-            post = sem.run(X, K=K)
+    sem.run(X, K=K, list_event_boundaries=list_event_boundaries)
 
-    y_hat = np.argmax(post, axis=1)
+    y_hat = np.argmax(sem.results.post, axis=1)
 
     r = adjusted_rand_score(y, y_hat)
 
@@ -88,14 +81,7 @@ def evaluate(X, y, Omega, K=None, number=0, save=True, return_pe=False, split_po
         f.close()
         return
 
-    if return_pe:
-        if split_post:
-            return r, post, pe, log_lik, log_prior
-        return r, post, pe
-    if split_post:
-        return r, post, _, log_lik, log_prior
-
-    return r, post
+    return sem, r
 
 
 # generate random string
