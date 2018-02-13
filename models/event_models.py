@@ -13,6 +13,8 @@ class EventModel(object):
 
     def __init__(self, D):
         self.D = D
+        self.f_is_trained = False
+        self.f0_is_trained = False
 
     def update(self, X, Y):
         """
@@ -31,6 +33,20 @@ class EventModel(object):
 
     def predict_next(self, X):
         """
+        wrapper for the prediction function that changes the prediction to the identity function
+        for untrained models (this is an initialization technique)
+
+        """
+        if not self.f_is_trained:
+            return np.copy(X)
+
+        return self._predict_next(X)
+
+
+    def _predict_next(self, X):
+        """
+        Internal function
+
         Parameters
         ----------
         X: 1xD array-like data of inputs
@@ -43,6 +59,17 @@ class EventModel(object):
         return np.copy(X)
 
     def predict_f0(self):
+        """
+        wrapper for the prediction function that changes the prediction to the identity function
+        for untrained models (this is an initialization technique)
+
+        """
+        if not self.f0_is_trained:
+            return np.zeros(self.D)
+
+        return self._predict_f0()
+
+    def _predict_f0(self):
         return np.zeros(self.D)
 
     def update_f0(self, Y):
@@ -56,11 +83,11 @@ class EventModel(object):
 
     def predict_next_generative(self, X):
         X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.D))
-        return self.predict_next(X0)
+        return self._predict_next(X0)
 
     def run_generative(self, n_steps, initial_point=None):
         if initial_point is None:
-            x_gen = self.predict_f0()
+            x_gen = self._predict_f0()
         else:
             x_gen = np.reshape(initial_point, (1, self.D))
         for ii in range(1, n_steps):
@@ -85,7 +112,7 @@ class LinearDynamicSystem(EventModel):
         self.eta = eta
         self.f0 = np.zeros(D)
 
-    def predict_next(self, X):
+    def _predict_next(self, X):
         """
         Parameters
         ----------
@@ -118,7 +145,7 @@ class LinearDynamicSystem(EventModel):
         Y: np.array, length D
             observed sucessor state vector
         """
-        Y_hat = np.reshape(self.predict_next(X), (Y.shape[0]))
+        Y_hat = np.reshape(self._predict_next(X), (Y.shape[0]))
 
         # compute gradient of log likelihood w.r.t. parameters
         db = self.eta * (Y - Y_hat)
@@ -127,12 +154,14 @@ class LinearDynamicSystem(EventModel):
         # store the updated parameters
         self.beta += db
         self.W += dW
+        self.f_is_trained = True
 
-    def predict_f0(self):
+    def _predict_f0(self):
         return self.f0
 
     def update_f0(self, Y):
         self.f0 += self.eta * (Y - self.f0)
+        self.f0_is_trained = True
 
 
 class KerasLDS(EventModel):
@@ -185,7 +214,6 @@ class KerasLDS(EventModel):
     def estimate(self):
         self.model.fit(self.x_train, self.y_train, verbose=0, epochs=self.n_epochs, shuffle=True)
 
-
     def update(self, X, Y):
         if np.ndim(X) == 1:
             N = 1
@@ -194,9 +222,9 @@ class KerasLDS(EventModel):
         self.x_train = np.concatenate([self.x_train, np.reshape(X, newshape=(N, self.D))])
         self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(N, self.D))])
         self.estimate()
-        self.is_visited = True
+        self.f_is_trained = True
 
-    def predict_next(self, X):
+    def _predict_next(self, X):
         """
         Parameters
         ----------
@@ -216,15 +244,15 @@ class KerasLDS(EventModel):
 
     def predict_next_generative(self, X):
         # the LDS is a markov model, so these functions are the same
-        return self.predict_next(X)
+        return self._predict_next(X)
 
-    def predict_f0(self):
-        if self.is_visited:
-            return self.predict_next(np.zeros(self.D))
-        return np.zeros(self.D)
+    def _predict_f0(self):
+        return self._predict_next(np.zeros(self.D))
 
     def update_f0(self, Y):
         self.update(np.zeros(self.D), Y)
+        self.f0_is_trained = True
+
 
 
 class KerasMultiLayerPerceptron(KerasLDS):
@@ -337,11 +365,11 @@ class KerasSimpleRNN(KerasLDS):
         if update_estimate:
             self.batch()
 
-        self.is_visited = True
+        self.f_is_trained = True
 
 
     # predict a single example
-    def predict_next(self, X):
+    def _predict_next(self, X):
         # Note: this function predicts the next conditioned on the training data the model has seen
 
         if X.ndim > 1:
@@ -361,11 +389,8 @@ class KerasSimpleRNN(KerasLDS):
         X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.D))
         return self.model.predict(X0)
 
-    def predict_f0(self):
-        if self.is_visited:
-            return self.predict_next_generative(np.zeros(self.D))
-        return np.zeros(self.D)
-
+    def _predict_f0(self):
+        return self.predict_next_generative(np.zeros(self.D))
 
     # create a new cluster of scenes
     def new_token(self):
@@ -437,7 +462,7 @@ class CustomGRU(EventModel):
         """
         pass
 
-    def predict_next(self, X):
+    def _predict_next(self, X):
         """
         Parameters
         ----------
@@ -450,12 +475,12 @@ class CustomGRU(EventModel):
         """
         return np.copy(X)
 
-    def predict_f0(self):
+    def _predict_f0(self):
         return np.zeros(self.D)
 
     def predict_next_generative(self, X):
         X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.D))
-        return self.predict_next(X0)
+        return self._predict_next(X0)
 
     def update_f0(self, Y):
         pass
@@ -468,7 +493,7 @@ class CustomGRU(EventModel):
 
     def run_generative(self, n_steps, initial_point=None):
         if initial_point is None:
-            x_gen = self.predict_f0()
+            x_gen = self._predict_f0()
         else:
             x_gen = np.reshape(initial_point, (1, self.D))
         for ii in range(1, n_steps):
