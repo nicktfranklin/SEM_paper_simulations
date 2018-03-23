@@ -235,14 +235,17 @@ class SEM(object):
 
         N = X.shape[0]
 
-        Sigma = np.eye(self.D) * self.beta  # noise for multivariate gaussian likelihood
-
         # initialize arrays
         post = np.zeros((N, self.K))
         pe = np.zeros(np.shape(X)[0])
+        y_hat = np.zeros(np.shape(X))
+
         # debugging functions
         log_like = np.zeros((N, self.K))
         log_prior = np.zeros((N, self.K))
+
+        # for the estimates of beta
+        beta_cache = dict()
 
 
         event_boundary = True #  boolean variable that identifies if there has been an event boundary
@@ -257,6 +260,10 @@ class SEM(object):
                 return range(N)
 
         for n in my_it(N):
+            Sigma = np.eye(self.D) * self.beta  # noise for multivariate gaussian likelihood
+            if np.argmax(post[n, :]) in beta_cache:
+                Sigma = np.eye(self.D) * np.std(beta_cache[np.argmax(post[n, :])])
+
             x_curr = X[n, :].copy()
 
             # look for experimenter supplied boundaries
@@ -313,9 +320,17 @@ class SEM(object):
             if n > 0:
                 assert self.x_prev is not None and self.k_prev is not None
                 model = self.event_models[self.k_prev]
-                pe[n] = np.linalg.norm(x_curr - model.predict_next(self.x_prev))
+                y_hat[n, :] = model.predict_next(self.x_prev)
+                pe[n] = np.linalg.norm(x_curr - y_hat[n, :])
+
 
             self.C[k] += 1  # update counts
+
+            # update the beta cache
+            e = np.argmax(post[n, :])
+            if e not in beta_cache:
+                beta_cache[e] = np.zeros(0)
+            beta_cache[e] = np.concatenate([beta_cache[e], np.array(y_hat[n, :] - x_curr).reshape(-1)])
 
             # update event model
             if not event_boundary:
@@ -337,6 +352,7 @@ class SEM(object):
         self.results.log_like = log_like
         self.results.log_prior = log_prior
         self.results.e_hat = np.argmax(post, axis=1)
+        self.results.y_hat = y_hat
 
         return post
 

@@ -281,7 +281,7 @@ class KerasSimpleRNN(KerasLDS):
     # RNN which is initialized once and then trained using stochastic gradient descent
     # i.e. each new scene is a single example batch of size 1
 
-    def __init__(self, D, t=5, n_hidden1=10, n_hidden2=10, hidden_act1='relu', hidden_act2='relu',
+    def __init__(self, D, t=5, n_hidden1=None, n_hidden2=None, hidden_act1='relu', hidden_act2='relu',
                  optimizer=None, n_epochs=50, dropout=0.50, l2_regularization=0.01, batch_size=32,
                  kernel_initializer='glorot_uniform'):
         #
@@ -299,8 +299,14 @@ class KerasSimpleRNN(KerasLDS):
 
         self.t = t
         self.n_epochs = n_epochs
-        self.n_hidden1 = n_hidden1
-        self.n_hidden2 = n_hidden2
+        if n_hidden1 is None:
+            self.n_hidden1 = D
+        else:
+            self.n_hidden1 = n_hidden1
+        if n_hidden2 is None:
+            self.n_hidden2 = D
+        else:
+            self.n_hidden2 = n_hidden2
         self.hidden_act1 = hidden_act1 
         self.hidden_act2 = hidden_act2
         self.D = D
