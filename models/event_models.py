@@ -2,9 +2,98 @@ import tensorflow as tf
 import numpy as np
 from utils import unroll_data
 from keras.models import Sequential
-from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout
+from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM
+from keras import backend as K
+from keras import initializers
 from keras import optimizers
 from keras import regularizers
+
+from collections import OrderedDict
+
+
+class GRULN(GRU):
+    '''Gated Recurrent Unit with Layer Normalization
+    Current impelemtation only works with consume_less = 'gpu' which is already
+    set.
+    # Arguments
+        output_dim: dimension of the internal projections and the final output.
+        ...: see GRU documentation for all other arguments.
+        gamma_init: name of initialization function for scale parameter.
+            The default is 1, but in some cases this is too high resulting
+            in NaN loss while training. If this happens try reducing to 0.2
+    # References
+        -[Layer Normalization](https://arxiv.org/abs/1607.06450)
+    '''
+    def __init__(self, output_dim, gamma_init=1., **kwargs):
+        if 'consume_less' in kwargs:
+            assert kwargs['consume_less'] == 'gpu'
+        else:
+            kwargs = kwargs.copy()
+            kwargs['consume_less']='gpu'
+        super(GRULN, self).__init__(output_dim, **kwargs)
+
+        def gamma_init_func(shape, c=gamma_init, **kwargs):
+            if c == 1.:
+                return initializers.Ones(shape, **kwargs)
+            return K.variable(np.ones(shape) * c, **kwargs)
+
+        self.gamma_init = gamma_init_func
+        self.beta_init = initializers.Zeros()
+        self.epsilon = 1e-5
+
+    def build(self, input_shape):
+        super(GRULN, self).build(input_shape)
+        shape = (self.output_dim,)
+        shape1 = (2*self.output_dim,)
+        # LN is applied in 4 inputs/outputs (fields) of the cell
+        gammas = OrderedDict()
+        betas = OrderedDict()
+        # each location has its own BN
+        for slc, shp in zip(['state_below', 'state_belowx', 'preact', 'preactx'], [shape1, shape, shape1, shape]):
+            gammas[slc] = self.gamma_init(shp,
+                                          name='{}_gamma_{}'.format(
+                                              self.name, slc))
+            betas[slc] = self.beta_init(shp,
+                                        name='{}_beta_{}'.format(
+                                            self.name, slc))
+
+        self.gammas = gammas
+        self.betas = betas
+
+        self.trainable_weights += self.gammas.values() + self.betas.values()
+
+    def ln(self, x, slc):
+        # sample-wise normalization
+        m = K.mean(x, axis=-1, keepdims=True)
+        std = K.sqrt(K.var(x, axis=-1, keepdims=True) + self.epsilon)
+        x_normed = (x - m) / (std + self.epsilon)
+        x_normed = self.gammas[slc] * x_normed + self.betas[slc]
+        return x_normed
+
+    def step(self, x, states):
+        h_tm1 = states[0]  # previous memory
+        B_U = states[1]  # dropout matrices for recurrent units
+        B_W = states[2]
+
+        matrix_x = K.dot(x * B_W[0], self.W) + self.b
+        x_ = self.ln(matrix_x[:, : 2 * self.output_dim], 'state_below')
+        xx_ = self.ln(matrix_x[:, 2 * self.output_dim:], 'state_belowx')
+        matrix_inner = self.ln(K.dot(h_tm1 * B_U[0], self.U[:, :2 * self.output_dim]), 'preact')
+
+        x_z = x_[:, :self.output_dim]
+        x_r = x_[:, self.output_dim: 2 * self.output_dim]
+        inner_z = matrix_inner[:, :self.output_dim]
+        inner_r = matrix_inner[:, self.output_dim: 2 * self.output_dim]
+
+        z = self.inner_activation(x_z + inner_z)
+        r = self.inner_activation(x_r + inner_r)
+
+        x_h = xx_
+        inner_h = r * self.ln(K.dot(h_tm1 * B_U[0], self.U[:, 2 * self.output_dim:]), 'preactx')
+        hh = self.activation(x_h + inner_h)
+
+        h = z * h_tm1 + (1 - z) * hh
+        return h, [h]
 
 
 class EventModel(object):
@@ -166,7 +255,7 @@ class LinearDynamicSystem(EventModel):
 
 class KerasLDS(EventModel):
 
-    def __init__(self, D, optimizer=None, n_epochs=50, init_model=True):
+    def __init__(self, D, optimizer='adam', n_epochs=50, init_model=True):
         EventModel.__init__(self, D)
         self.x_train = np.zeros((0, self.D))  # initialize empty arrays
         self.y_train = np.zeros((0, self.D))
@@ -257,7 +346,7 @@ class KerasLDS(EventModel):
 
 class KerasMultiLayerPerceptron(KerasLDS):
 
-    def __init__(self, D, n_hidden=None, hidden_act='tanh', optimizer=None, n_epochs=50, l2_regularization=0.01):
+    def __init__(self, D, n_hidden=None, hidden_act='tanh', optimizer='adam', n_epochs=50, l2_regularization=0.00):
         KerasLDS.__init__(self, D, optimizer=optimizer, init_model=False)
         if n_hidden is None:
             n_hidden = D
@@ -281,8 +370,8 @@ class KerasSimpleRNN(KerasLDS):
     # RNN which is initialized once and then trained using stochastic gradient descent
     # i.e. each new scene is a single example batch of size 1
 
-    def __init__(self, D, t=5, n_hidden1=None, n_hidden2=None, hidden_act1='relu', hidden_act2='relu',
-                 optimizer=None, n_epochs=50, dropout=0.50, l2_regularization=0.01, batch_size=32,
+    def __init__(self, D, t=3, n_hidden1=None, n_hidden2=None, hidden_act1='relu', hidden_act2='relu',
+                 optimizer='adam', n_epochs=50, dropout=0.10, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform'):
         #
         # D = dimension of single input / output example
@@ -373,7 +462,6 @@ class KerasSimpleRNN(KerasLDS):
 
         self.f_is_trained = True
 
-
     # predict a single example
     def _predict_next(self, X):
         # Note: this function predicts the next conditioned on the training data the model has seen
@@ -431,6 +519,28 @@ class KerasSimpleRNN(KerasLDS):
             y_batch = np.reshape(y_batch, (self.batch_size, self.D))
             self.model.train_on_batch(x_batch, y_batch)
 
+    def batch_last_clust(self):
+        # draw a set of training examples from the history
+        x_batch = []
+        y_batch = []
+
+        # pull the last cluster
+        x_batch = self.x_history[-1]
+        y_batch = self.y_history[-1]
+
+        # t = np.random.randint(len(x_history))
+        #
+        # x_batch.append(np.reshape(
+        #     unroll_data(x_history[max(t - self.t, 0):t + 1, :], self.t)[-1, :, :], (1, self.t, self.D)
+        # ))
+        # y_batch.append(y_history[t, :])
+
+        x_batch = unroll_data(x_batch, t=np.shape(x_batch)[0])
+
+        # x_batch = np.reshape(x_batch, (self.batch_size, self.t, self.D))
+        # y_batch = np.reshape(y_batch, (self.batch_size, self.D))
+        self.model.train_on_batch(x_batch, y_batch)
+
 
 class KerasGRU(KerasSimpleRNN):
     def _init_model(self):
@@ -440,6 +550,52 @@ class KerasGRU(KerasSimpleRNN):
         # input_shape[1] = input_dim; each example is a self.D-dimensional vector
         self.model = Sequential()
         self.model.add(GRU(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
+        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2, kernel_regularizer=self.kernel_regularizer))
+        self.model.add(Dropout(self.dropout))
+        self.model.add(Dense(self.D, activation=None,  kernel_regularizer=self.kernel_regularizer))
+        self.model.compile(**self.compile_opts)
+
+
+class KerasGRU_norm(KerasSimpleRNN):
+    def _init_model(self):
+        self.sess = tf.Session()
+
+        # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
+        # input_shape[1] = input_dim; each example is a self.D-dimensional vector
+        self.model = Sequential()
+        self.model.add(GRULN(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
+        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2, kernel_regularizer=self.kernel_regularizer))
+        # self.model.add(GRU(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
+        # self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2, kernel_constraint=max_norm(1.)))
+        self.model.add(Dropout(self.dropout))
+        self.model.add(Dense(self.D, activation=None,  kernel_regularizer=self.kernel_regularizer))
+        self.model.compile(**self.compile_opts)
+
+
+class KerasGRU_stacked(KerasSimpleRNN):
+    def _init_model(self):
+        self.sess = tf.Session()
+
+        # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
+        # input_shape[1] = input_dim; each example is a self.D-dimensional vector
+        self.model = Sequential()
+        self.model.add(GRU(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1,
+                           return_sequences=True))
+        self.model.add(GRU(self.n_hidden1, activation=self.hidden_act1))
+        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2, kernel_regularizer=self.kernel_regularizer))
+        self.model.add(Dropout(self.dropout))
+        self.model.add(Dense(self.D, activation=None,  kernel_regularizer=self.kernel_regularizer))
+        self.model.compile(**self.compile_opts)
+
+
+class KerasLSTM(KerasSimpleRNN):
+    def _init_model(self):
+        self.sess = tf.Session()
+
+        # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
+        # input_shape[1] = input_dim; each example is a self.D-dimensional vector
+        self.model = Sequential()
+        self.model.add(LSTM(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
         self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2, kernel_regularizer=self.kernel_regularizer))
         self.model.add(Dropout(self.dropout))
         self.model.add(Dense(self.D, activation=None,  kernel_regularizer=self.kernel_regularizer))
