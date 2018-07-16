@@ -188,6 +188,30 @@ class LinearDynamicSystem(EventModel):
         self.f0_is_trained = True
 
 
+class Guassian(EventModel):
+    def __init__(self, D, beta):
+        EventModel.__init__(self, D, beta)
+        self.mu = np.zeros(D)
+        self.Sigma = np.eye(D) * beta
+        self.history = np.zeros((0, D))
+
+    def update(self, X, Y):
+        self.update_f0(Y)
+        self.f_is_trained = True
+
+    def update_f0(self, Y):
+        self.history = np.concatenate([self.history, Y.reshape(1, -1)])
+        self.mu = np.mean(self.history, axis=0)
+        #         print "check"
+
+        n = np.shape(self.history)[0]
+        if n > 3:
+            w = 1.0 / (.5 + np.log(n))
+            self.Sigma = np.eye(self.D) * ((1.0 - w) * np.var(self.history, axis=0) + \
+                                           np.ones(self.D) * w * self.beta)
+
+
+
 class KerasLDS(EventModel):
 
     def __init__(self, D, optimizer='adam', n_epochs=50, init_model=True, beta=None, kernel_initializer='glorot_uniform'):
@@ -278,11 +302,11 @@ class KerasLDS(EventModel):
         self.update(np.zeros(self.D), Y)
         self.f0_is_trained = True
 
+
 class KerasLDS_b(KerasLDS):
 
     def __init__(self, D, optimizer='adam', n_epochs=50, init_model=True, beta=None):
         KerasLDS.__init__(self, D, optimizer=optimizer, init_model=init_model, beta=beta, n_epochs=n_epochs)
-        # self.pe_dot = np.zeros(0)
         self.pe = np.zeros((0, D))
 
     def update(self, X, Y):
@@ -498,6 +522,33 @@ class KerasElmanSRN(KerasSimpleRNN):
                                  activation=None, kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
 
+
+class KerasElmanSRN_b(KerasElmanSRN):
+
+    def __init__(self, D, t=3, n_hidden1=None, n_hidden2=None, hidden_act1='relu', hidden_act2='relu',
+                 optimizer='adam', n_epochs=50, dropout=0.10, l2_regularization=0.00, batch_size=32,
+                 kernel_initializer='glorot_uniform', beta=None):
+        KerasElmanSRN.__init__(self, D, t, n_hidden1, n_hidden2, hidden_act1, hidden_act2,
+                 optimizer, n_epochs, dropout, l2_regularization, batch_size,
+                 kernel_initializer, beta)
+        self.pe = np.zeros((0, D))
+
+    def update(self, X, Y):
+        super(KerasElmanSRN, self).update(X, Y)
+
+        # cache a prediction error term
+        Y_hat = self._predict_next(X)
+
+        self.pe = np.concatenate([self.pe, Y - Y_hat])
+        if np.shape(self.pe)[0] > 1:
+            # self.beta = np.var(self.pe, axis=0)
+            # self.Sigma = np.eye(self.D) * self.beta
+
+            # useing the MLE can be too sensitive, so here we'll weight the MLE by there prior acording to a
+            # decending function
+            n = np.shape(self.pe)[0]
+            w = 1. / (1+ np.log(n))
+            self.Sigma = np.eye(self.D) * ((1.0 - w) * np.var(self.pe, axis=0) + np.ones(self.D) * w * self.beta)
 
 class KerasGRU0(KerasSimpleRNN):
     def _init_model(self):

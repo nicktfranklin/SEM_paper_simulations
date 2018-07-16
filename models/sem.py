@@ -308,6 +308,7 @@ class SEM(object):
             log_like[n, :len(active)] = lik - np.max(lik)
             log_prior[n, :len(active)] = np.log(prior[:len(active)])
 
+            # get the MAP cluster and only update it
             k = np.argmax(post[n, :])  # MAP cluster
 
             # prediction error: euclidean distance of the last model and the current scene vector
