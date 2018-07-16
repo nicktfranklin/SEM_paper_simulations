@@ -47,6 +47,7 @@ class SEM(object):
 
         self.f_class = f_class
         self.f_opts = f_opts
+        self.f_opts['beta'] = beta  # pass the beta value to the event model
 
         # SEM internal state
         #
@@ -115,18 +116,18 @@ class SEM(object):
         for attr_name in get_object_attributes(self):
             if attr_name == 'event_models':
                 D = dump['D']
-                dummy_event_model = self.f_class(D, **self.f_opts) # dummy event model to get the keras
-                                                                   # optimizer (can't serialize it)
+                dummy_event_model = self.f_class(D, **self.f_opts)  # dummy event model to get the keras
+                                                                    # optimizer (can't serialize it)
 
                 event_dump = dump['event_models']
                 for k, event_model in event_dump.iteritems():
                     print '       loading event model', k, ' from ', event_model.weights_filename
 
                     # bring model back to normal
-                    event_model.sess = tf.Session() # restart TF session for model
-                    event_model.model = model_from_json(event_model.model) # restore model structure from json
-                    event_model.model.load_weights(event_model.weights_filename) # restore model weights from HDF5
-                    event_model.model.compile(**dummy_event_model.compile_opts) # compile model using dummy event model
+                    event_model.sess = tf.Session()  # restart TF session for model
+                    event_model.model = model_from_json(event_model.model)  # restore model structure from json
+                    event_model.model.load_weights(event_model.weights_filename)  # restore model weights from HDF5
+                    event_model.model.compile(**dummy_event_model.compile_opts)  # compile model using dummy event model
                     #  options (can't serialize them)
 
                     self.event_models[k] = event_model
@@ -204,7 +205,6 @@ class SEM(object):
             self.C = np.concatenate((self.C, np.zeros(self.K - self.C.size)), axis=0)
         assert self.C.size == self.K
 
-
     def run(self, X, K=None, progress_bar=True, leave_progress_bar=True, list_event_boundaries=None):
         """
         Parameters
@@ -244,10 +244,6 @@ class SEM(object):
         log_like = np.zeros((N, self.K))
         log_prior = np.zeros((N, self.K))
 
-        # for the estimates of beta
-        beta_cache = dict()
-
-
         event_boundary = True #  boolean variable that identifies if there has been an event boundary
                 # this doesn't necessarily mean a different event type (i.e.cluster)
 
@@ -261,8 +257,6 @@ class SEM(object):
 
         for n in my_it(N):
             Sigma = np.eye(self.D) * self.beta  # noise for multivariate gaussian likelihood
-            if np.argmax(post[n, :]) in beta_cache:
-                Sigma = np.eye(self.D) * np.std(beta_cache[np.argmax(post[n, :])])
 
             x_curr = X[n, :].copy()
 
@@ -323,14 +317,9 @@ class SEM(object):
                 y_hat[n, :] = model.predict_next(self.x_prev)
                 pe[n] = np.linalg.norm(x_curr - y_hat[n, :])
 
-
             self.C[k] += 1  # update counts
 
-            # update the beta cache
             e = np.argmax(post[n, :])
-            if e not in beta_cache:
-                beta_cache[e] = np.zeros(0)
-            beta_cache[e] = np.concatenate([beta_cache[e], np.array(y_hat[n, :] - x_curr).reshape(-1)])
 
             # update event model
             if not event_boundary:
@@ -338,7 +327,7 @@ class SEM(object):
                 assert self.x_prev is not None
                 self.event_models[k].update(self.x_prev, x_curr)
             else:
-                # we're in a new event -> update the initialization point only
+                # we're in a new event token -> update the initialization point only
                 self.event_models[k].new_token()
                 self.event_models[k].update_f0(x_curr)
 
@@ -361,4 +350,3 @@ class SEM(object):
 #
 def get_object_attributes(obj):
     return [a for a in dir(obj) if not a.startswith('__') and not callable(getattr(obj,a))]
-
