@@ -256,7 +256,6 @@ class SEM(object):
                 return range(N)
 
         for n in my_it(N):
-            Sigma = np.eye(self.D) * self.beta  # noise for multivariate gaussian likelihood
 
             x_curr = X[n, :].copy()
 
@@ -294,10 +293,11 @@ class SEM(object):
 
                 if not event_boundary:
                     assert self.x_prev is not None
-                    Y_hat = model.predict_next(self.x_prev)
+                    lik[k] = model.likelihood_next(self.x_prev, x_curr)
+
                 else:
-                    Y_hat = model.predict_f0()
-                lik[k] = mvnormal.logpdf(x_curr - Y_hat, mean=np.zeros(self.D), cov=Sigma)
+                    lik[k] = model.likelihood_f0(x_curr)
+
 
             # posterior
             p = np.log(prior[:len(active)]) + lik - np.max(lik)  # subtracting the max like doesn't change proportionality
@@ -318,8 +318,6 @@ class SEM(object):
                 pe[n] = np.linalg.norm(x_curr - y_hat[n, :])
 
             self.C[k] += 1  # update counts
-
-            e = np.argmax(post[n, :])
 
             # update event model
             if not event_boundary:

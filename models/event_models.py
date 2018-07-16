@@ -5,6 +5,7 @@ from keras.models import Sequential
 from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM
 from keras import optimizers
 from keras import regularizers
+from scipy.stats import multivariate_normal as mvnormal
 
 
 class EventModel(object):
@@ -18,6 +19,9 @@ class EventModel(object):
             self.beta = 0.1 * D
         else:
             self.beta = beta
+
+        # initilaize the covariance matrix
+        self.Sigma = np.eye(D) * self.beta
 
     def update(self, X, Y):
         """
@@ -44,6 +48,21 @@ class EventModel(object):
             return np.copy(X)
 
         return self._predict_next(X)
+
+    def likelihood_f0(self, Y):
+
+        # predict the inital point
+        Y_hat = self.predict_f0()
+
+        # return the probability
+        return mvnormal.logpdf(Y - Y_hat, mean=np.zeros(self.D), cov=self.Sigma)
+
+    def likelihood_next(self, X, Y):
+        Y_hat = self.predict_next(X)
+        return mvnormal.logpdf(Y - Y_hat, mean=np.zeros(self.D), cov=self.Sigma)
+
+
+    # def lik
 
     def _predict_next(self, X):
         """
@@ -171,7 +190,7 @@ class LinearDynamicSystem(EventModel):
 
 class KerasLDS(EventModel):
 
-    def __init__(self, D, optimizer='adam', n_epochs=50, init_model=True, beta=None):
+    def __init__(self, D, optimizer='adam', n_epochs=50, init_model=True, beta=None, kernel_initializer='glorot_uniform'):
         EventModel.__init__(self, D, beta)
         self.x_train = np.zeros((0, self.D))  # initialize empty arrays
         self.y_train = np.zeros((0, self.D))
@@ -184,7 +203,8 @@ class KerasLDS(EventModel):
             }
             optimizer = optimizers.SGD(**sgd_kwargs)
 
-        self.compile_opts = dict(optimizer=optimizer, loss='mean_squared_error', )
+        self.compile_opts = dict(optimizer=optimizer, loss='mean_squared_error')
+        self.kernel_initializer = kernel_initializer
         self.n_epochs = n_epochs
 
         self.is_visited = False  # governs the special case of model's first prediction (i.e. with no experience)
@@ -198,7 +218,7 @@ class KerasLDS(EventModel):
         N, D = self.x_train.shape
 
         self.model = Sequential([
-            Dense(D, input_shape=(D,)),
+            Dense(D, input_shape=(D,), use_bias=True, kernel_initializer=self.kernel_initializer),
             Activation('linear')
         ])
 
@@ -257,6 +277,30 @@ class KerasLDS(EventModel):
     def update_f0(self, Y):
         self.update(np.zeros(self.D), Y)
         self.f0_is_trained = True
+
+class KerasLDS_b(KerasLDS):
+
+    def __init__(self, D, optimizer='adam', n_epochs=50, init_model=True, beta=None):
+        KerasLDS.__init__(self, D, optimizer=optimizer, init_model=init_model, beta=beta, n_epochs=n_epochs)
+        # self.pe_dot = np.zeros(0)
+        self.pe = np.zeros((0, D))
+
+    def update(self, X, Y):
+        super(KerasLDS_b, self).update(X, Y)
+
+        # cache a prediction error term
+        Y_hat = self._predict_next(X)
+
+        self.pe = np.concatenate([self.pe, Y - Y_hat])
+        if np.shape(self.pe)[0] > 1:
+            # self.beta = np.var(self.pe, axis=0)
+            # self.Sigma = np.eye(self.D) * self.beta
+
+            # useing the MLE can be too sensitive, so here we'll weight the MLE by there prior acording to a
+            # decending function
+            n = np.shape(self.pe)[0]
+            w = 1. / (1+ np.log(n))
+            self.Sigma = np.eye(self.D) * ((1.0 - w) * np.var(self.pe, axis=0) + np.ones(self.D) * w * self.beta)
 
 
 class KerasMultiLayerPerceptron(KerasLDS):
@@ -437,24 +481,13 @@ class KerasSimpleRNN(KerasLDS):
 
     def batch_last_clust(self):
         # draw a set of training examples from the history
-        x_batch = []
-        y_batch = []
 
         # pull the last cluster
         x_batch = self.x_history[-1]
         y_batch = self.y_history[-1]
 
-        # t = np.random.randint(len(x_history))
-        #
-        # x_batch.append(np.reshape(
-        #     unroll_data(x_history[max(t - self.t, 0):t + 1, :], self.t)[-1, :, :], (1, self.t, self.D)
-        # ))
-        # y_batch.append(y_history[t, :])
-
         x_batch = unroll_data(x_batch, t=np.shape(x_batch)[0])
 
-        # x_batch = np.reshape(x_batch, (self.batch_size, self.t, self.D))
-        # y_batch = np.reshape(y_batch, (self.batch_size, self.D))
         self.model.train_on_batch(x_batch, y_batch)
 
 class KerasElmanSRN(KerasSimpleRNN):
@@ -476,7 +509,6 @@ class KerasGRU0(KerasSimpleRNN):
         self.model.add(Dense(self.D, activation=None, kernel_regularizer=None))
         self.model.compile(**self.compile_opts)
 
-
 class KerasGRU(KerasSimpleRNN):
     def _init_model(self):
         self.sess = tf.Session()
@@ -489,23 +521,6 @@ class KerasGRU(KerasSimpleRNN):
         self.model.add(Dropout(self.dropout))
         self.model.add(Dense(self.D, activation=None, kernel_regularizer=self.kernel_regularizer))
         self.model.compile(**self.compile_opts)
-
-
-class KerasGRU_norm(KerasSimpleRNN):
-    def _init_model(self):
-        self.sess = tf.Session()
-
-        # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
-        # input_shape[1] = input_dim; each example is a self.D-dimensional vector
-        self.model = Sequential()
-        self.model.add(GRULN(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
-        self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2, kernel_regularizer=self.kernel_regularizer))
-        # self.model.add(GRU(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
-        # self.model.add(Dense(self.n_hidden2, activation=self.hidden_act2, kernel_constraint=max_norm(1.)))
-        self.model.add(Dropout(self.dropout))
-        self.model.add(Dense(self.D, activation=None, kernel_regularizer=self.kernel_regularizer))
-        self.model.compile(**self.compile_opts)
-
 
 class KerasGRU_stacked(KerasSimpleRNN):
     def _init_model(self):
@@ -521,7 +536,6 @@ class KerasGRU_stacked(KerasSimpleRNN):
         self.model.add(Dropout(self.dropout))
         self.model.add(Dense(self.D, activation=None, kernel_regularizer=self.kernel_regularizer))
         self.model.compile(**self.compile_opts)
-
 
 class KerasLSTM(KerasSimpleRNN):
     def _init_model(self):
