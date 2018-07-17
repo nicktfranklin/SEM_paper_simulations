@@ -267,8 +267,8 @@ class SEM(object):
             prior = self.C.copy()
             idx = len(np.nonzero(self.C)[0])  # get number of visited clusters
 
-            if idx < self.K:
-                prior[idx] = self.alfa  # set new cluster probability to alpha
+            if idx <= self.K:
+                prior[idx] += self.alfa  # set new cluster probability to alpha
 
             # add stickiness parameter for n>0, only for the previously chosen event
             if n > 0:
@@ -298,9 +298,8 @@ class SEM(object):
                 else:
                     lik[k] = model.likelihood_f0(x_curr)
 
-
             # posterior
-            p = np.log(prior[:len(active)]) + lik - np.max(lik)  # subtracting the max like doesn't change proportionality
+            p = np.log(prior[:len(active)]) + lik - np.max(lik)   # subtracting the max doesn't change proportionality
             post[n, :len(active)] = np.exp(p - logsumexp(p))
             # update
 
@@ -331,7 +330,7 @@ class SEM(object):
                 self.event_models[k].update_f0(x_curr)
 
             self.x_prev = x_curr  # store the current scene for next trial
-            self.k_prev = k # store the current event for the next trial
+            self.k_prev = k  # store the current event for the next trial
             event_boundary = False
 
         self.results = Results()
