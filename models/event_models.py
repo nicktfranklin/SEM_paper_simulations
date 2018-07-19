@@ -195,6 +195,9 @@ class Guassian(EventModel):
         self.Sigma = np.eye(D) * beta
         self.history = np.zeros((0, D))
 
+    def _predict_next(self, X):
+        return self.mu
+
     def update(self, X, Y):
         self.update_f0(Y)
         self.f_is_trained = True
@@ -202,15 +205,39 @@ class Guassian(EventModel):
     def update_f0(self, Y):
         self.history = np.concatenate([self.history, Y.reshape(1, -1)])
         self.mu = np.mean(self.history, axis=0)
-        #         print "check"
 
         n = np.shape(self.history)[0]
         if n > 3:
-            w = 1.0 / (.5 + np.log(n))
+            w = 1.0 / (1.0 + np.log(n))
             self.Sigma = np.eye(self.D) * ((1.0 - w) * np.var(self.history, axis=0) + \
                                            np.ones(self.D) * w * self.beta)
 
 
+class GuassianRandomWalk(EventModel):
+    def __init__(self, D, beta):
+        EventModel.__init__(self, D, beta)
+        self.Sigma = np.eye(D) * beta
+        self.history = np.zeros((0, D))
+
+    def _predict_next(self, X):
+        if X.ndim > 1:
+            return np.copy(X[-1, :])
+        else:
+            return np.copy(X)
+
+    def update(self, X, Y):
+        self.update_f0(Y)
+        self.f_is_trained = False
+
+    def update_f0(self, Y):
+        self.history = np.concatenate([self.history, Y.reshape(1, -1)])
+
+        diff = self.history[1:, :] - self.history[:-1, :]
+
+        n = np.shape(diff)[0]
+        if n > 3:
+            w = 1.0 / (1.0 + np.log(n))
+            self.Sigma = np.eye(self.D) * ((1.0 - w) * np.var(diff, axis=0) + np.ones(self.D) * w * self.beta)
 
 class KerasLDS(EventModel):
 
