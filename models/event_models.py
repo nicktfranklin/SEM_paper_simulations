@@ -8,10 +8,42 @@ from keras import regularizers
 from scipy.stats import multivariate_normal as mvnormal
 
 
+def map_variance(samples, df0, scale0, mu=None):
+    """
+    This estimator assumes an scaled inverse-chi squared prior over the
+    variance and a Gaussian likelihood. The parameters d and scale
+    of the internal function parameterize the posterior of the variance.
+    Taken from Bayesian Data Analysis, ch2 (Gelman)
+
+    samples: N length array or NxD array
+    df0: prior degrees of freedom
+    scale0: prior scale parameter
+    mu: (optional) mean function
+
+    returns: float or d-length array, mode of the posterior
+    """
+    if np.ndim(samples) > 1:
+        n, d = np.shape(samples)
+    else:
+        n = np.shape(samples)[0]
+        d = 1
+    if mu is None:
+        mu = np.zeros(d)
+
+    v = np.var(samples, axis=0)
+    df = df0 + n
+    scale = (df0 * scale0 + n * v) / df
+    return df * scale / (df * 2)
+
 class EventModel(object):
     """ this is the base clase of the event model """
 
     def __init__(self, D, beta=None):
+        """
+
+        :param D: dimensions of the input space
+        :param beta: (float) or D length np.array -- event noise
+        """
         self.D = D
         self.f_is_trained = False
         self.f0_is_trained = False
@@ -189,11 +221,15 @@ class LinearDynamicSystem(EventModel):
 
 
 class Guassian(EventModel):
-    def __init__(self, D, beta):
+    def __init__(self, D, var_df0, var_scale0, beta=None):
+        beta = var_df0 * var_scale0 / (var_df0 + 2)
+
         EventModel.__init__(self, D, beta)
         self.mu = np.zeros(D)
         self.Sigma = np.eye(D) * beta
         self.history = np.zeros((0, D))
+        self.var_df0 = var_df0
+        self.var_scale0 = var_scale0
 
     def _predict_next(self, X):
         return self.mu
@@ -207,17 +243,19 @@ class Guassian(EventModel):
         self.mu = np.mean(self.history, axis=0)
 
         n = np.shape(self.history)[0]
-        if n > 3:
-            w = 1.0 / (1.0 + np.log(n))
-            self.Sigma = np.eye(self.D) * ((1.0 - w) * np.var(self.history, axis=0) + \
-                                           np.ones(self.D) * w * self.beta)
+        if n > 1:
+            self.Sigma = np.eye(self.D) * map_variance(self.history, self.var_df0, self.var_scale0, mu=self.mu)
 
 
 class GuassianRandomWalk(EventModel):
-    def __init__(self, D, beta):
+    def __init__(self, D, var_df0, var_scale0, beta=None):
+        beta = var_df0 * var_scale0 / (var_df0 + 2)
+
         EventModel.__init__(self, D, beta)
         self.Sigma = np.eye(D) * beta
-        self.history = np.zeros((0, D))
+        self.pe = np.zeros((0, D))
+        self.var_df0 = var_df0
+        self.var_scale0 = var_scale0
 
     def _predict_next(self, X):
         if X.ndim > 1:
@@ -226,18 +264,15 @@ class GuassianRandomWalk(EventModel):
             return np.copy(X)
 
     def update(self, X, Y):
-        self.update_f0(Y)
-        self.f_is_trained = False
+        self.pe = np.concatenate([self.pe, (Y - X).reshape(1, -1)])
+        if np.shape(self.pe)[0] > 1:
+            self.Sigma = np.eye(self.D) * map_variance(self.pe, self.var_df0, self.var_scale0)
 
     def update_f0(self, Y):
-        self.history = np.concatenate([self.history, Y.reshape(1, -1)])
+        self.f0 = Y
+        self.pe = np.concatenate([self.pe, np.reshape(Y, (1, -1))])
+        self.f_is_trained = True
 
-        diff = self.history[1:, :] - self.history[:-1, :]
-
-        n = np.shape(diff)[0]
-        if n > 3:
-            w = 1.0 / (1.0 + np.log(n))
-            self.Sigma = np.eye(self.D) * ((1.0 - w) * np.var(diff, axis=0) + np.ones(self.D) * w * self.beta)
 
 class KerasLDS(EventModel):
 
@@ -332,9 +367,11 @@ class KerasLDS(EventModel):
 
 class KerasLDS_b(KerasLDS):
 
-    def __init__(self, D, optimizer='adam', n_epochs=50, init_model=True, beta=None):
+    def __init__(self, D, var_df0, var_scale0, optimizer='adam', n_epochs=50, init_model=True, beta=None):
         KerasLDS.__init__(self, D, optimizer=optimizer, init_model=init_model, beta=beta, n_epochs=n_epochs)
         self.pe = np.zeros((0, D))
+        self.var_df0 = var_df0
+        self.var_scale0 = var_scale0
 
     def update(self, X, Y):
         super(KerasLDS_b, self).update(X, Y)
@@ -344,14 +381,7 @@ class KerasLDS_b(KerasLDS):
 
         self.pe = np.concatenate([self.pe, Y - Y_hat])
         if np.shape(self.pe)[0] > 1:
-            # self.beta = np.var(self.pe, axis=0)
-            # self.Sigma = np.eye(self.D) * self.beta
-
-            # useing the MLE can be too sensitive, so here we'll weight the MLE by there prior acording to a
-            # decending function
-            n = np.shape(self.pe)[0]
-            w = 1. / (1+ np.log(n))
-            self.Sigma = np.eye(self.D) * ((1.0 - w) * np.var(self.pe, axis=0) + np.ones(self.D) * w * self.beta)
+            self.Sigma = np.eye(self.D) * map_variance(self.pe, self.var_df0, self.var_scale0)
 
 
 class KerasMultiLayerPerceptron(KerasLDS):
