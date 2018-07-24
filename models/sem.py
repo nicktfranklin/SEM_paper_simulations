@@ -17,7 +17,7 @@ class SEM(object):
     in python. More documentation to come!
     """
 
-    def __init__(self, lmda=1., alfa=10.0, beta=0.1, f_class=None, f_opts=None):
+    def __init__(self, lmda=1., alfa=10.0, beta=0.1, f_class=None, f_opts=None, ):
         """
         Parameters
         ----------
@@ -40,7 +40,7 @@ class SEM(object):
         """
         self.lmda = lmda
         self.alfa = alfa
-        self.beta = beta
+        # self.beta = beta
 
         if f_class is None:
             raise ValueError("f_model must be specified!")
@@ -259,10 +259,6 @@ class SEM(object):
 
             x_curr = X[n, :].copy()
 
-            # look for experimenter supplied boundaries
-            if list_event_boundaries is not None:
-                event_boundary = list_event_boundaries[n]
-
             # calculate sCRP prior
             prior = self.C.copy()
             idx = len(np.nonzero(self.C)[0])  # get number of visited clusters
@@ -280,23 +276,21 @@ class SEM(object):
             active = np.nonzero(prior)[0]
             lik = np.zeros(len(active))
 
-            for k in active:
-                if k not in self.event_models.keys():
-                    self.event_models[k] = self.f_class(self.D, **self.f_opts)
+            for k0 in active:
+                if k0 not in self.event_models.keys():
+                    self.event_models[k0] = self.f_class(self.D, **self.f_opts)
 
                 # get the log likelihood for each event model
-                model = self.event_models[k]
+                model = self.event_models[k0]
 
                 # detect event boundaries when there is a change
-                if k != self.k_prev:
-                    event_boundary = True  # N.B this allows for experimenter override
+                event_boundary0 = (k0 != self.k_prev)  # N.B this allows for experimenter override
 
-                if not event_boundary:
+                if not event_boundary0:
                     assert self.x_prev is not None
-                    lik[k] = model.likelihood_next(self.x_prev, x_curr)
-
+                    lik[k0] = model.likelihood_next(self.x_prev, x_curr)
                 else:
-                    lik[k] = model.likelihood_f0(x_curr)
+                    lik[k0] = model.likelihood_f0(x_curr)
 
             # posterior
             p = np.log(prior[:len(active)]) + lik - np.max(lik)   # subtracting the max doesn't change proportionality
@@ -310,15 +304,19 @@ class SEM(object):
             # get the MAP cluster and only update it
             k = np.argmax(post[n, :])  # MAP cluster
 
+            # look for experimenter supplied boundaries
+            if list_event_boundaries is not None:
+                event_boundary = list_event_boundaries[n]
+            else:
+                event_boundary = k != self.k_prev
+
             # prediction error: euclidean distance of the last model and the current scene vector
             if n > 0:
-                assert self.x_prev is not None and self.k_prev is not None
                 model = self.event_models[self.k_prev]
                 y_hat[n, :] = model.predict_next(self.x_prev)
                 pe[n] = np.linalg.norm(x_curr - y_hat[n, :])
 
             self.C[k] += 1  # update counts
-
             # update event model
             if not event_boundary:
                 # we're in the same event -> update using previous scene
