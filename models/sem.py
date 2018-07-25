@@ -2,10 +2,10 @@ import numpy as np
 import tensorflow as tf
 from scipy.misc import logsumexp
 from tqdm import tqdm_notebook
-from scipy.stats import multivariate_normal as mvnormal
 from keras.models import model_from_json
 import copy
 import os
+
 
 class Results(object):
     """ placeholder object to store results """
@@ -54,7 +54,7 @@ class SEM(object):
         self.K = 0 # maximum number of clusters (event types)
         self.C = np.array([]) # running count of the clustering process = n of scenes
                               # for each event type (the CRP prior)
-        self.D = None # dimension of scenes
+        self.d = None  # dimension of scenes
         self.event_models = dict() # event model for each event type
 
         self.x_prev = None # last scene
@@ -167,7 +167,7 @@ class SEM(object):
 
             if k not in self.event_models.keys():
                 # initialize new event model
-                self.event_models[k] = self.f_class(self.D, **self.f_opts)
+                self.event_models[k] = self.f_class(self.d, **self.f_opts)
 
             # update event model
             if self.k_prev == k:
@@ -190,10 +190,10 @@ class SEM(object):
         """
         # get dimensions of data
         [N, D] = np.shape(X)
-        if self.D is None:
-            self.D = D
+        if self.d is None:
+            self.d = D
         else:
-            assert self.D == D # scenes must be of same dimension
+            assert self.d == D  # scenes must be of same dimension
 
         # get max # of clusters / event types
         if K is None:
@@ -231,7 +231,7 @@ class SEM(object):
 
         # update internal state
         self.update_state(X, K)
-        del K # use self.K and self.D
+        del K  # use self.K and self.d
 
         N = X.shape[0]
 
@@ -278,7 +278,7 @@ class SEM(object):
 
             for k0 in active:
                 if k0 not in self.event_models.keys():
-                    self.event_models[k0] = self.f_class(self.D, **self.f_opts)
+                    self.event_models[k0] = self.f_class(self.d, **self.f_opts)
 
                 # get the log likelihood for each event model
                 model = self.event_models[k0]
@@ -289,8 +289,10 @@ class SEM(object):
                 if not event_boundary0:
                     assert self.x_prev is not None
                     lik[k0] = model.likelihood_next(self.x_prev, x_curr)
+                    # print "PE, Current Event: {}".format(np.linalg.norm(x_curr - model.predict_next(self.x_prev)))
                 else:
                     lik[k0] = model.likelihood_f0(x_curr)
+                    # print "PE, New Event:     {}".format(np.linalg.norm(x_curr - model.predict_f0()))
 
             # posterior
             p = np.log(prior[:len(active)]) + lik - np.max(lik)   # subtracting the max doesn't change proportionality
@@ -329,7 +331,6 @@ class SEM(object):
 
             self.x_prev = x_curr  # store the current scene for next trial
             self.k_prev = k  # store the current event for the next trial
-            event_boundary = False
 
         self.results = Results()
         self.results.post = post
