@@ -17,7 +17,7 @@ class SEM(object):
     in python. More documentation to come!
     """
 
-    def __init__(self, lmda=1., alfa=10.0, beta=0.1, f_class=None, f_opts=None, ):
+    def __init__(self, lmda=1., alfa=10.0, f_class=None, f_opts=None, ):
         """
         Parameters
         ----------
@@ -47,18 +47,17 @@ class SEM(object):
 
         self.f_class = f_class
         self.f_opts = f_opts
-        self.f_opts['beta'] = beta  # pass the beta value to the event model
 
         # SEM internal state
         #
         self.K = 0 # maximum number of clusters (event types)
-        self.C = np.array([]) # running count of the clustering process = n of scenes
-                              # for each event type (the CRP prior)
+        self.C = np.array([])  # running count of the clustering process = n of scenes
+                               # for each event type (the CRP prior)
         self.d = None  # dimension of scenes
-        self.event_models = dict() # event model for each event type
+        self.event_models = dict()  # event model for each event type
 
-        self.x_prev = None # last scene
-        self.k_prev = None # last event type
+        self.x_prev = None  # last scene
+        self.k_prev = None  # last event type
 
         # instead of dumping the results, store them to the object
         self.results = None
