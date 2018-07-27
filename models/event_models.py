@@ -293,7 +293,7 @@ class LinearDynamicSystem(EventModel):
 
 class KerasLDS(EventModel):
 
-    def __init__(self, d, var_df0, var_scale0, optimizer='adam', n_epochs=50, init_model=True, beta=None,
+    def __init__(self, d, var_df0, var_scale0, optimizer='adam', n_epochs=100, init_model=True, beta=None,
                  kernel_initializer='glorot_uniform', l2_regularization=0.00):
         EventModel.__init__(self, d, beta)
         self.x_train = np.zeros((0, self.d))  # initialize empty arrays
@@ -399,9 +399,9 @@ class KerasLDS(EventModel):
 
 class KerasMultiLayerPerceptron(KerasLDS):
 
-    def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh',
-                 optimizer='adam', n_epochs=50, beta=None, init_model=True,
-                 kernel_initializer='glorot_uniform', l2_regularization=0.00):
+    def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='relu',
+                 optimizer='adam', n_epochs=100, beta=None, init_model=True,
+                 kernel_initializer='glorot_uniform', l2_regularization=0.00, dropout=0.10):
         KerasLDS.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
                           init_model=False, beta=beta, kernel_initializer=kernel_initializer,
                           l2_regularization=l2_regularization)
@@ -410,6 +410,7 @@ class KerasMultiLayerPerceptron(KerasLDS):
             n_hidden = d
         self.n_hidden = n_hidden
         self.hidden_act = hidden_act
+        self.dropout = dropout
 
         if init_model:
             self._init_model()
@@ -420,6 +421,7 @@ class KerasMultiLayerPerceptron(KerasLDS):
         self.model.add(Dense(self.n_hidden, input_shape=(D,), activation=self.hidden_act,
                              kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
+        self.model.add(Dropout(self.dropout))
         self.model.add(Dense(D, activation='linear', kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
@@ -431,7 +433,7 @@ class KerasSRN(KerasLDS):
     # i.e. each new scene is a single example batch of size 1
 
     def __init__(self, d, var_df0, var_scale0, t=3,
-                 optimizer='adam', n_epochs=50, l2_regularization=0.00, batch_size=32,
+                 optimizer='adam', n_epochs=100, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform', beta=None, init_model=True):
         #
         # D = dimension of single input / output example
@@ -576,8 +578,7 @@ class KerasSRN(KerasLDS):
 class KerasRecurrentMLP(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='relu', optimizer='adam',
-                 n_epochs=50, dropout=0.10, l2_regularization=0.00,
-                 batch_size=32,
+                 n_epochs=100, dropout=0.10, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform', beta=None, init_model=True):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
@@ -612,8 +613,7 @@ class KerasRecurrentMLP(KerasSRN):
 class KerasGRU(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='relu', optimizer='adam',
-                 n_epochs=50, dropout=0.10, l2_regularization=0.00,
-                 batch_size=32,
+                 n_epochs=100, dropout=0.10, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform', beta=None, init_model=True):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
@@ -648,7 +648,7 @@ class KerasGRU(KerasSRN):
 class KerasLSTM(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='relu', optimizer='adam',
-                 n_epochs=50, dropout=0.10, l2_regularization=0.00,
+                 n_epochs=100, dropout=0.10, l2_regularization=0.00,
                  batch_size=32,
                  kernel_initializer='glorot_uniform', beta=None, init_model=True):
 
