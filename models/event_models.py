@@ -2,8 +2,7 @@ import tensorflow as tf
 import numpy as np
 from utils import unroll_data
 from keras.models import Sequential
-from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM
-from keras import optimizers
+from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM, LeakyReLU
 from keras import regularizers
 from scipy.stats import multivariate_normal as mvnormal
 
@@ -295,14 +294,7 @@ class KerasLDS(EventModel):
         EventModel.__init__(self, d)
         self.x_train = np.zeros((0, self.d))  # initialize empty arrays
         self.y_train = np.zeros((0, self.d))
-        if optimizer is None:
-            sgd_kwargs = {
-                'nesterov': True,
-                'lr': 0.001,
-                'momentum': 0.5,
-                'decay': 0.0001
-            }
-            optimizer = optimizers.SGD(**sgd_kwargs)
+
 
         self.compile_opts = dict(optimizer=optimizer, loss='mean_squared_error')
         self.kernel_initializer = kernel_initializer
@@ -399,7 +391,7 @@ class KerasLDS(EventModel):
 
 class KerasMultiLayerPerceptron(KerasLDS):
 
-    def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='relu',
+    def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh',
                  optimizer='adam', n_epochs=100,init_model=True,
                  kernel_initializer='glorot_uniform', l2_regularization=0.00, dropout=0.10):
         KerasLDS.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
@@ -422,7 +414,7 @@ class KerasMultiLayerPerceptron(KerasLDS):
                              kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
         self.model.add(Dropout(self.dropout))
-        self.model.add(Dense(D, activation='linear', kernel_regularizer=self.kernel_regularizer,
+        self.model.add(Dense(D, activation='linear',
                              kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
 
@@ -585,7 +577,7 @@ class KerasSRN(KerasLDS):
 
 class KerasRecurrentMLP(KerasSRN):
 
-    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='relu', optimizer='adam',
+    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer='adam',
                  n_epochs=100, dropout=0.10, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform', init_model=True):
 
@@ -609,9 +601,10 @@ class KerasRecurrentMLP(KerasSRN):
         self.model = Sequential()
         # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.d-dimensional vector
-        self.model.add(SimpleRNN(self.n_hidden, input_shape=(self.t, self.d), activation=self.hidden_act,
+        self.model.add(SimpleRNN(self.n_hidden, input_shape=(self.t, self.d), #activation=self.hidden_act,
                                  kernel_regularizer=self.kernel_regularizer,
                                  kernel_initializer=self.kernel_initializer))
+        self.model.add(LeakyReLU(alpha=0.3))
         self.model.add(Dropout(self.dropout))
         self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer,
                   kernel_initializer=self.kernel_initializer))
@@ -620,7 +613,7 @@ class KerasRecurrentMLP(KerasSRN):
 
 class KerasGRU(KerasSRN):
 
-    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='relu', optimizer='adam',
+    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer='adam',
                  n_epochs=100, dropout=0.10, l2_regularization=0.00,batch_size=32,
                  kernel_initializer='glorot_uniform', init_model=True):
 
@@ -644,9 +637,10 @@ class KerasGRU(KerasSRN):
         self.model = Sequential()
         # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.d-dimensional vector
-        self.model.add(GRU(self.n_hidden, input_shape=(self.t, self.d), activation=self.hidden_act,
+        self.model.add(GRU(self.n_hidden, input_shape=(self.t, self.d), #activation=self.hidden_act,
                                  kernel_regularizer=self.kernel_regularizer,
                                  kernel_initializer=self.kernel_initializer))
+        self.model.add(LeakyReLU(alpha=0.3))
         self.model.add(Dropout(self.dropout))
         self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer,
                   kernel_initializer=self.kernel_initializer))
@@ -655,7 +649,7 @@ class KerasGRU(KerasSRN):
 
 class KerasLSTM(KerasSRN):
 
-    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='relu', optimizer='adam',
+    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer='adam',
                  n_epochs=100, dropout=0.10, l2_regularization=0.00,
                  batch_size=32,
                  kernel_initializer='glorot_uniform', beta=None, init_model=True):
@@ -680,9 +674,10 @@ class KerasLSTM(KerasSRN):
         self.model = Sequential()
         # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.d-dimensional vector
-        self.model.add(LSTM(self.n_hidden, input_shape=(self.t, self.d), activation=self.hidden_act,
+        self.model.add(LSTM(self.n_hidden, input_shape=(self.t, self.d), #activation=self.hidden_act,
                            kernel_regularizer=self.kernel_regularizer,
                            kernel_initializer=self.kernel_initializer))
+        self.model.add(LeakyReLU(alpha=0.3))
         self.model.add(Dropout(self.dropout))
         self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
