@@ -415,6 +415,7 @@ class KerasMultiLayerPerceptron(KerasLDS):
                              kernel_initializer=self.kernel_initializer))
         self.model.add(Dropout(self.dropout))
         self.model.add(Dense(D, activation='linear',
+                             kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
 
@@ -563,16 +564,21 @@ class KerasSRN(KerasLDS):
             y_batch = np.reshape(y_batch, (self.batch_size, self.d))
             self.model.train_on_batch(x_batch, y_batch)
 
-    # def batch_last_clust(self):
-    #     # draw a set of training examples from the history
-    #
-    #     # pull the last cluster
-    #     x_batch = self.x_history[-1]
-    #     y_batch = self.y_history[-1]
-    #
-    #     x_batch = unroll_data(x_batch, t=np.shape(x_batch)[0])
-    #
-    #     self.model.train_on_batch(x_batch, y_batch)
+    def batch_last_clust(self):
+        """
+        This function is exclusively used for the Botvinick Simulations
+        :return:
+        """
+
+        # draw a set of training examples from the history
+
+        # pull the last cluster
+        x_batch = self.x_history[-1]
+        y_batch = self.y_history[-1]
+
+        x_batch = unroll_data(x_batch, t=np.shape(x_batch)[0])
+
+        self.model.train_on_batch(x_batch, y_batch)
 
 
 class KerasRecurrentMLP(KerasSRN):
