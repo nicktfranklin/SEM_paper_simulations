@@ -79,7 +79,7 @@ class EventModel(object):
 
     def likelihood_f0(self, Y):
 
-        # predict the inital point
+        # predict the initial point
         Y_hat = self.predict_f0()
 
         # return the probability
@@ -87,6 +87,10 @@ class EventModel(object):
 
     def likelihood_next(self, X, Y):
         Y_hat = self.predict_next(X)
+        return mvnormal.logpdf(Y.reshape(-1), mean=Y_hat.reshape(-1), cov=self.Sigma)
+
+    def likelihood_sequence(self, X, Y):
+        Y_hat = self.predict_next_generative(X)
         return mvnormal.logpdf(Y.reshape(-1), mean=Y_hat.reshape(-1), cov=self.Sigma)
 
 
@@ -392,8 +396,8 @@ class KerasLDS(EventModel):
 class KerasMultiLayerPerceptron(KerasLDS):
 
     def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh',
-                 optimizer='adam', n_epochs=100,init_model=True,
-                 kernel_initializer='glorot_uniform', l2_regularization=0.00, dropout=0.10):
+                 optimizer='adam', n_epochs=100, init_model=True, kernel_initializer='glorot_uniform',
+                 l2_regularization=0.00, dropout=0.10):
         KerasLDS.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
                           init_model=False, kernel_initializer=kernel_initializer,
                           l2_regularization=l2_regularization)
