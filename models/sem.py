@@ -7,9 +7,16 @@ import copy
 import os
 
 
+# helper f'n that gets all attributes of an object
+#
+def get_object_attributes(obj):
+    return [a for a in dir(obj) if not a.startswith('__') and not callable(getattr(obj,a))]
+
+
 class Results(object):
     """ placeholder object to store results """
     pass
+
 
 class SEM(object):
     """
@@ -50,7 +57,7 @@ class SEM(object):
 
         # SEM internal state
         #
-        self.K = 0 # maximum number of clusters (event types)
+        self.K = 0  # maximum number of clusters (event types)
         self.C = np.array([])  # running count of the clustering process = n of scenes
                                # for each event type (the CRP prior)
         self.d = None  # dimension of scenes
@@ -143,9 +150,9 @@ class SEM(object):
         assert X.shape[0] == y.size
 
         # update internal state
-        K = np.max(y) + 1
-        self.update_state(X, K)
-        del K # use self.K
+        k = np.max(y) + 1
+        self._update_state(X, k)
+        del k  # use self.k
 
         N = X.shape[0]
 
@@ -183,20 +190,20 @@ class SEM(object):
             self.x_prev = x_curr  # store the current scene for next trial
             self.k_prev = k # store the current event for the next trial
 
-    def update_state(self, X, K=None):
+    def _update_state(self, X, K=None):
         """
         Update internal state based on input data X and max # of event types (clusters) K
         """
         # get dimensions of data
-        [N, D] = np.shape(X)
+        [n, d] = np.shape(X)
         if self.d is None:
-            self.d = D
+            self.d = d
         else:
-            assert self.d == D  # scenes must be of same dimension
+            assert self.d == d  # scenes must be of same dimension
 
         # get max # of clusters / event types
         if K is None:
-            K = N
+            K = n
         self.K = max(self.K, K)
 
         # initialize CRP prior = running count of the clustering process
@@ -204,7 +211,24 @@ class SEM(object):
             self.C = np.concatenate((self.C, np.zeros(self.K - self.C.size)), axis=0)
         assert self.C.size == self.K
 
-    def run(self, X, K=None, progress_bar=True, leave_progress_bar=True, list_event_boundaries=None):
+    def _calculate_prior_from_counts(self, prev_cluster=None):
+        # internal function for consistencey across "run" methods
+
+        # calculate sCRP prior
+        prior = self.C.copy()
+        idx = len(np.nonzero(self.C)[0])  # get number of visited clusters
+
+        if idx <= self.K:
+            prior[idx] += self.alfa  # set new cluster probability to alpha
+
+        # add stickiness parameter for n>0, only for the previously chosen event
+        if prev_cluster is not None:
+            prior[prev_cluster] += self.lmda
+
+        prior /= np.sum(prior)
+        return prior
+
+    def run(self, X, K=None, progress_bar=True, leave_progress_bar=True):
         """
         Parameters
         ----------
@@ -220,8 +244,6 @@ class SEM(object):
         return_lik_prior: bool
             return the model's log likelihood and log prior over clusterings
 
-        list_event_boundaries: list
-            this is an boolean list of length N that specifies external boundaries by the agent
 
         Return
         ------
@@ -229,8 +251,8 @@ class SEM(object):
         """
 
         # update internal state
-        self.update_state(X, K)
-        del K  # use self.K and self.d
+        self._update_state(X, K)
+        del K  # use self.k and self.d
 
         N = X.shape[0]
 
@@ -242,9 +264,6 @@ class SEM(object):
         # debugging functions
         log_like = np.zeros((N, self.K))
         log_prior = np.zeros((N, self.K))
-
-        event_boundary = True #  boolean variable that identifies if there has been an event boundary
-                # this doesn't necessarily mean a different event type (i.e.cluster)
 
         # this code just controls the presence/absence of a progress bar -- it isn't important
         if progress_bar:
@@ -259,17 +278,8 @@ class SEM(object):
             x_curr = X[n, :].copy()
 
             # calculate sCRP prior
-            prior = self.C.copy()
-            idx = len(np.nonzero(self.C)[0])  # get number of visited clusters
-
-            if idx <= self.K:
-                prior[idx] += self.alfa  # set new cluster probability to alpha
-
-            # add stickiness parameter for n>0, only for the previously chosen event
-            if n > 0:
-                prior[np.argmax(post[n-1, :])] += self.lmda
-
-            prior /= np.sum(prior)
+            prior = self._calculate_prior_from_counts(self.k_prev)
+            # N.B. k_prev should be none for the first event if there wasn't pre-training
 
             # likelihood
             active = np.nonzero(prior)[0]
@@ -303,13 +313,10 @@ class SEM(object):
             log_prior[n, :len(active)] = np.log(prior[:len(active)])
 
             # get the MAP cluster and only update it
-            k = np.argmax(post[n, :])  # MAP cluster
+            K = np.argmax(post[n, :])  # MAP cluster
 
-            # look for experimenter supplied boundaries
-            if list_event_boundaries is not None:
-                event_boundary = list_event_boundaries[n]
-            else:
-                event_boundary = k != self.k_prev
+            # determine whether there was a boundary
+            event_boundary = K != self.k_prev
 
             # prediction error: euclidean distance of the last model and the current scene vector
             if n > 0:
@@ -317,19 +324,19 @@ class SEM(object):
                 y_hat[n, :] = model.predict_next(self.x_prev)
                 pe[n] = np.linalg.norm(x_curr - y_hat[n, :])
 
-            self.C[k] += 1  # update counts
+            self.C[K] += 1  # update counts
             # update event model
             if not event_boundary:
                 # we're in the same event -> update using previous scene
                 assert self.x_prev is not None
-                self.event_models[k].update(self.x_prev, x_curr)
+                self.event_models[K].update(self.x_prev, x_curr)
             else:
                 # we're in a new event token -> update the initialization point only
-                self.event_models[k].new_token()
-                self.event_models[k].update_f0(x_curr)
+                self.event_models[K].new_token()
+                self.event_models[K].update_f0(x_curr)
 
             self.x_prev = x_curr  # store the current scene for next trial
-            self.k_prev = k  # store the current event for the next trial
+            self.k_prev = K  # store the current event for the next trial
 
         self.results = Results()
         self.results.post = post
@@ -341,8 +348,169 @@ class SEM(object):
 
         return post
 
+    def run_w_boundaries(self, list_events, progress_bar=True, leave_progress_bar=True):
+        """
+        This method is the same as the above except the event boundaries are prespecified by the experimentor
+        as a list of event tokens (the event/schema type is still inferred).
 
-# helper f'n that gets all attributes of an object
-#
-def get_object_attributes(obj):
-    return [a for a in dir(obj) if not a.startswith('__') and not callable(getattr(obj,a))]
+        One difference is that the event token-type association is bound at the last scene of an event type.
+        N.B. ! also, all of the updating is done at the event-token level.  There is no updating within an event!
+
+        evaluate the probability of each event over the whole token
+
+
+        Parameters
+        ----------
+        list_events: list of N x D arrays -- each an event
+
+
+        progress_bar: bool
+
+
+        leave_progress_bar: bool
+
+
+        Return
+        ------
+        post: N by K array of posterior probabilities
+        """
+
+        # update internal state
+
+        k = len(list_events)
+        self._update_state(np.concatenate(list_events, axis=0), k)
+        del k  # use self.k and self.d
+
+        # initialize
+        # initialize arrays -- these are calculated per scene!
+        n_scenes = np.shape(np.concatenate(list_events, axis=0))[0]
+        pe = np.zeros(n_scenes)
+        y_hat = np.zeros((n_scenes, self.d))
+
+        # debugging functions -- these are calculated per event!
+        n_events = len(list_events)
+        post = np.zeros((n_events, self.K))
+        log_like = np.zeros((n_events, self.K)) - np.inf
+        log_prior = np.zeros((n_events, self.K)) - np.inf
+
+        # the first event is deterministically assigned -- so just train in
+        X = list_events[0]
+        self.event_models[0] = self.f_class(self.d, **self.f_opts)
+        log_like[0, 0] = self.event_models[0].likelihood_f0(X[0, :])
+        self.event_models[0].update_f0(X[0, :])
+        for ii in range(1, np.shape(X)[0]):
+            # cache the predictions?
+            y_hat[ii, :] = self.event_models[0].predict_next(X[:ii, :])
+
+            # update the event model
+            self.event_models[0].update(X[ii - 1, :], X[ii, :])
+
+            # these is strictly a diagnostic measure
+            pe[ii] = np.linalg.norm(X[ii - 1, :] - y_hat[ii, :])
+
+        self.event_models[0].new_token()
+
+        # update the posterior
+        post[0, 0] = 1.0
+        log_like[0, 0] = 0.
+        log_prior[0, 0] = 0.
+
+        # loop through the other events in the list
+        if progress_bar:
+            def my_it(iterator):
+                return tqdm_notebook(iterator, desc='Run SEM', leave=leave_progress_bar)
+        else:
+            def my_it(iterator):
+                return iterator
+
+        t = 1  # count the number of events that are experienced
+        for X in my_it(list_events[1:]):
+
+            # cache the previous event cluster type for the prior
+            self.k_prev = 0
+            self.event_models[0] = self.f_class(self.d, **self.f_opts)
+
+            # calculate sCRP prior
+            prior = self._calculate_prior_from_counts(self.k_prev)
+
+            # likelihood
+            active = np.nonzero(prior)[0]
+            lik = np.zeros((np.shape(X)[0], len(active)))
+
+            # again, this is for diagnostics only
+            _pe = np.zeros(np.shape(X)[0])
+            k_within_event = np.argmax(post[t, :])
+
+            for ii, x_curr in enumerate(X):
+
+                # we need to maintain a distribution over possible event types for the current events --
+                # this gets locked down after termination of the event.
+                # Also: none of the event models can be updated until *after* the event has been observed
+
+                # special case the first scene within the event
+                if ii == 0:
+                    event_boundary = True
+                else:
+                    event_boundary = False
+
+                if event_boundary:
+                    _pe[ii] = np.linalg.norm(x_curr - self.event_models[k_within_event].predict_f0())
+                else:
+                    _pe[ii] = np.linalg.norm(
+                        x_curr - self.event_models[k_within_event].predict_next_generative(X[:ii, :]))
+
+                # loop through each potentially active event model
+                for k0 in active:
+                    if k0 not in self.event_models.keys():
+                        self.event_models[k0] = self.f_class(self.d, **self.f_opts)
+
+                    # get the log likelihood for each event model
+                    model = self.event_models[k0]
+
+                    if not event_boundary:
+                        lik[ii, k0] = model.likelihood_sequence(X[:ii, :], x_curr)
+                    else:
+                        lik[ii, k0] = model.likelihood_f0(x_curr)
+
+                # for the purpose of calculating a prediction error and a prediction error only, calculate
+                # a within event estimate of the event type (the real estimate is at the end of the event,
+                # taking into account the accumulated evidence
+                k_within_event = np.argmax(np.sum(lik[:ii+1, :len(active)], axis=0) + np.log(prior[:len(active)]))
+
+            # cache the diagnostic measures
+            log_like[t, :len(active)] = np.sum(lik, axis=0)
+            log_prior[t, :len(active)] = np.log(prior[:len(active)])
+
+            # at the end of the event, find the winning model!
+            log_post = log_prior[t, :len(active)] + log_like[t, :len(active)]
+            post[t, :len(active)] = np.exp(log_post - logsumexp(log_post))
+            k = np.argmax(log_post)
+
+            # update the prior
+            self.C[k] += np.shape(X)[0]
+            # cache for next event
+            self.k_prev = k
+
+            # update the winning model's estimate
+            self.event_models[k].update_f0(X[0])
+            X_prev = X[0]
+            for X0 in X[1:]:
+                self.event_models[k].update(X0, X_prev)
+                X_prev = X0
+
+            t += 1
+
+        #
+        self.results = Results()
+        self.results.post = post
+        self.results.pe = pe
+        self.results.log_like = log_like
+        self.results.log_prior = log_prior
+        self.results.e_hat = np.argmax(post, axis=1)
+        self.results.y_hat = y_hat
+
+        return post
+
+
+
+
