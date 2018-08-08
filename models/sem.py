@@ -188,7 +188,7 @@ class SEM(object):
             self.C[k] += 1  # update counts
 
             self.x_prev = x_curr  # store the current scene for next trial
-            self.k_prev = k # store the current event for the next trial
+            self.k_prev = k  # store the current event for the next trial
 
     def _update_state(self, X, K=None):
         """
@@ -350,7 +350,7 @@ class SEM(object):
 
     def run_w_boundaries(self, list_events, progress_bar=True, leave_progress_bar=True):
         """
-        This method is the same as the above except the event boundaries are prespecified by the experimentor
+        This method is the same as the above except the event boundaries are pre-specified by the experimenter
         as a list of event tokens (the event/schema type is still inferred).
 
         One difference is that the event token-type association is bound at the last scene of an event type.
@@ -388,32 +388,9 @@ class SEM(object):
         y_hat = np.zeros((n_scenes, self.d))
 
         # debugging functions -- these are calculated per event!
-        n_events = len(list_events)
-        post = np.zeros((n_events, self.K))
-        log_like = np.zeros((n_events, self.K)) - np.inf
-        log_prior = np.zeros((n_events, self.K)) - np.inf
-
-        # the first event is deterministically assigned -- so just train in
-        X = list_events[0]
-        self.event_models[0] = self.f_class(self.d, **self.f_opts)
-        log_like[0, 0] = self.event_models[0].likelihood_f0(X[0, :])
-        self.event_models[0].update_f0(X[0, :])
-        for ii in range(1, np.shape(X)[0]):
-            # cache the predictions?
-            y_hat[ii, :] = self.event_models[0].predict_next(X[:ii, :])
-
-            # update the event model
-            self.event_models[0].update(X[ii - 1, :], X[ii, :])
-
-            # these is strictly a diagnostic measure
-            pe[ii] = np.linalg.norm(X[ii - 1, :] - y_hat[ii, :])
-
-        self.event_models[0].new_token()
-
-        # update the posterior
-        post[0, 0] = 1.0
-        log_like[0, 0] = 0.
-        log_prior[0, 0] = 0.
+        post = np.zeros((0, self.K))
+        log_like = np.zeros((0, self.K)) - np.inf
+        log_prior = np.zeros((0, self.K)) - np.inf
 
         # loop through the other events in the list
         if progress_bar:
@@ -423,12 +400,15 @@ class SEM(object):
             def my_it(iterator):
                 return iterator
 
-        t = 1  # count the number of events that are experienced
-        for X in my_it(list_events[1:]):
+        if self.k_prev is None:
+            self.event_models[0] = self.f_class(self.d, **self.f_opts)  # initialize the first event model
 
-            # cache the previous event cluster type for the prior
-            self.k_prev = 0
-            self.event_models[0] = self.f_class(self.d, **self.f_opts)
+        for X in my_it(list_events):
+
+            # extend the size of the posterior, etc
+            post = np.concatenate([post, np.zeros((1, self.K))], axis=0)
+            log_like = np.concatenate([log_like, np.zeros((1, self.K)) - np.inf], axis=0)
+            log_prior = np.concatenate([log_prior, np.zeros((1, self.K)) - np.inf], axis=0)
 
             # calculate sCRP prior
             prior = self._calculate_prior_from_counts(self.k_prev)
@@ -437,9 +417,10 @@ class SEM(object):
             active = np.nonzero(prior)[0]
             lik = np.zeros((np.shape(X)[0], len(active)))
 
-            # again, this is for diagnostics only
+            # again, this is for diagnostics only, but also keep track of the within event posterior
             _pe = np.zeros(np.shape(X)[0])
-            k_within_event = np.argmax(post[t, :])
+            k_within_event = np.argmax(prior)  # prior to the first scene within an event having been observed, the
+            # prior determines what the event type will be
 
             for ii, x_curr in enumerate(X):
 
@@ -478,12 +459,12 @@ class SEM(object):
                 k_within_event = np.argmax(np.sum(lik[:ii+1, :len(active)], axis=0) + np.log(prior[:len(active)]))
 
             # cache the diagnostic measures
-            log_like[t, :len(active)] = np.sum(lik, axis=0)
-            log_prior[t, :len(active)] = np.log(prior[:len(active)])
+            log_like[-1, :len(active)] = np.sum(lik, axis=0)
+            log_prior[-1, :len(active)] = np.log(prior[:len(active)])
 
             # at the end of the event, find the winning model!
-            log_post = log_prior[t, :len(active)] + log_like[t, :len(active)]
-            post[t, :len(active)] = np.exp(log_post - logsumexp(log_post))
+            log_post = log_prior[-1, :len(active)] + log_like[-1, :len(active)]
+            post[-1, :len(active)] = np.exp(log_post - logsumexp(log_post))
             k = np.argmax(log_post)
 
             # update the prior
@@ -497,8 +478,6 @@ class SEM(object):
             for X0 in X[1:]:
                 self.event_models[k].update(X0, X_prev)
                 X_prev = X0
-
-            t += 1
 
         #
         self.results = Results()
