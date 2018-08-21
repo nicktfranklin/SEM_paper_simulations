@@ -13,8 +13,6 @@ without installation:
 * `Demo - HRR.ipynb`
 * `Demo - Toy Data.ipynb`: Simulations of the SEM model segmenting 2D data sets
 * `Demo - Motion Capture Data.ipynb`: Simulations of the SEM model on the 3D motion capture data. 
-* `Demo - Coffee shop world (toy version, bag of words).ipynb`: Simulations of the SEM model on minimalistic
-coffee shop world demonstration using a bag of words embedding.
 
 
 #### Installation Instructions
