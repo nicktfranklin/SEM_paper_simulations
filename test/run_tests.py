@@ -20,7 +20,7 @@ import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
 from models import SEM, KerasLDS, LinearDynamicSystem, KerasMultiLayerPerceptron
-from models import KerasSimpleRNN, KerasGRU
+from models import KerasSRN, KerasGRU
 from opt.utils import evaluate, randstr
 # end of imports -- this line is a total hack so we can get the imports for the jupyter notebooks. Pls don't remove
 
@@ -141,7 +141,7 @@ def get_Omega(D):
     }
     
     # specify the model architecture (makes a big difference! especially the training parameters)
-    f_class = KerasSimpleRNN
+    f_class = KerasSRN
     f_opts = dict(t=t_horizon, n_epochs=200, sgd_kwargs=sgd_kwargs,
                   n_hidden1=D, n_hidden2=D, 
                   hidden_act1='relu', hidden_act2='relu',

@@ -2,7 +2,7 @@ import numpy as np
 import tensorflow as tf
 import pandas as pd
 
-from models import KerasGRU, KerasSimpleRNN, KerasLSTM, KerasGRU_stacked
+from models import KerasGRU, KerasSRN, KerasLSTM
 from opt.csw_utils import parse_story, parser_fight, parser_poetry
 from opt import embed, encode
 from tqdm import tqdm
@@ -216,16 +216,18 @@ def make_ap_flip_poetry(n_stories, start=0):
     return X, gramatical
 
 def train_evaluate_event_model(X, event_tokens, f_class, f_opts):
+    d = np.shape(X)[1]
+
     event_model = f_class(d, **f_opts)
-    event_model.update_f0(X[0, :])
+    event_model.update(np.zeros(1, d), X[0, :])
     y_pred_one_step = []
-    # event_boundary = False
+
     y_pred_one_step.append(event_model._predict_f0())
     for ii in range(1, np.shape(X)[0]):
         if event_tokens[ii] != event_tokens[ii - 1]:
-            y_pred_one_step.append(event_model._predict_f0())
+            y_pred_one_step.append(event_model.predict_next_generative(np.zeros((1, d))))
             event_model.new_token()
-            event_model.update_f0(X[ii, :])
+            event_model.update(np.zeros((1, d)))
         else:
             _X = X[(np.array(event_tokens) == event_tokens[ii]) & (np.arange(X.shape[0]) < ii), :]
             y_pred_one_step.append(event_model.predict_next_generative(_X))
@@ -235,16 +237,16 @@ def train_evaluate_event_model(X, event_tokens, f_class, f_opts):
     return events_dict, np.reshape(y_pred_one_step, X.shape)
 
 
-class KerasGRU_s(KerasSimpleRNN):
+class KerasGRU_s(KerasSRN):
     def _init_model(self):
         self.sess = tf.Session()
 
         # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.D-dimensional vector
         self.model = Sequential()
-        self.model.add(GRU(self.n_hidden1, input_shape=(self.t, self.D), activation=self.hidden_act1))
+        self.model.add(GRU(self.n_hidden1, input_shape=(self.t, self.d), activation=self.hidden_act1))
         self.model.add(Dropout(self.dropout))
-        self.model.add(Dense(self.D, activation=None,  kernel_regularizer=self.kernel_regularizer))
+        self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer))
         self.model.compile(**self.compile_opts)
 
 
@@ -291,7 +293,7 @@ def main():
         return pd.concat(df)
 
     print "Running SRN"
-    f_class = KerasSimpleRNN
+    f_class = KerasSRN
     f_opts = dict(n_epochs=25, optimizer='adam', n_hidden1=d, n_hidden2=d, l2_regularization=0.0, dropout=0.00)
     df_SRN = batch_model(f_class, f_opts)
 

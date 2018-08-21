@@ -1,7 +1,7 @@
 import numpy as np
 import tensorflow as tf
 from scipy.misc import logsumexp
-from tqdm import tqdm_notebook
+from tqdm import tqdm
 from keras.models import model_from_json
 import copy
 import os
@@ -159,7 +159,7 @@ class SEM(object):
         # loop over all scenes
         if progress_bar:
             def my_it(N):
-                return tqdm_notebook(range(N), desc='Pretraining', leave=leave_progress_bar)
+                return tqdm(range(N), desc='Pretraining', leave=leave_progress_bar)
         else:
             def my_it(N):
                 return range(N)
@@ -183,7 +183,7 @@ class SEM(object):
             else:
                 # we're in a new event -> update the initialization point only
                 self.event_models[k].new_token()
-                self.event_models[k].update_f0(x_curr)
+                self.event_models[k].update(np.zeros((1, self.d)), x_curr)
 
             self.C[k] += 1  # update counts
 
@@ -268,7 +268,7 @@ class SEM(object):
         # this code just controls the presence/absence of a progress bar -- it isn't important
         if progress_bar:
             def my_it(N):
-                return tqdm_notebook(range(N), desc='Run SEM', leave=leave_progress_bar)
+                return tqdm(range(N), desc='Run SEM', leave=leave_progress_bar)
         else:
             def my_it(N):
                 return range(N)
@@ -300,7 +300,7 @@ class SEM(object):
                     lik[k0] = model.likelihood_next(self.x_prev, x_curr)
                     # print "PE, Current Event: {}".format(np.linalg.norm(x_curr - model.predict_next(self.x_prev)))
                 else:
-                    lik[k0] = model.likelihood_f0(x_curr)
+                    lik[k0] = model.likelihood_next(np.zeros((1, self.d)), x_curr)
                     # print "PE, New Event:     {}".format(np.linalg.norm(x_curr - model.predict_f0()))
 
             # posterior
@@ -333,7 +333,7 @@ class SEM(object):
             else:
                 # we're in a new event token -> update the initialization point only
                 self.event_models[K].new_token()
-                self.event_models[K].update_f0(x_curr)
+                self.event_models[K].update(np.zeros((1, self.d)), x_curr)
 
             self.x_prev = x_curr  # store the current scene for next trial
             self.k_prev = K  # store the current event for the next trial
@@ -395,7 +395,7 @@ class SEM(object):
         # loop through the other events in the list
         if progress_bar:
             def my_it(iterator):
-                return tqdm_notebook(iterator, desc='Run SEM', leave=leave_progress_bar)
+                return tqdm(iterator, desc='Run SEM', leave=leave_progress_bar)
         else:
             def my_it(iterator):
                 return iterator
@@ -435,7 +435,8 @@ class SEM(object):
                     event_boundary = False
 
                 if event_boundary:
-                    _pe[ii] = np.linalg.norm(x_curr - self.event_models[k_within_event].predict_f0())
+                    event_boundary = self.event_models[k_within_event]
+                    _pe[ii] = np.linalg.norm(x_curr - event_boundary.predict_next_generative(np.zeros(1, self.d)))
                 else:
                     _pe[ii] = np.linalg.norm(
                         x_curr - self.event_models[k_within_event].predict_next_generative(X[:ii, :]))
@@ -451,7 +452,7 @@ class SEM(object):
                     if not event_boundary:
                         lik[ii, k0] = model.likelihood_sequence(X[:ii, :], x_curr)
                     else:
-                        lik[ii, k0] = model.likelihood_f0(x_curr)
+                        lik[ii, k0] = model.likelihood_sequence(np.zeros((1, self.d)), x_curr)
 
                 # for the purpose of calculating a prediction error and a prediction error only, calculate
                 # a within event estimate of the event type (the real estimate is at the end of the event,
@@ -473,7 +474,7 @@ class SEM(object):
             self.k_prev = k
 
             # update the winning model's estimate
-            self.event_models[k].update_f0(X[0])
+            self.event_models[k].update(np.zeros((1, self.d)), X[0])
             X_prev = X[0]
             for X0 in X[1:]:
                 self.event_models[k].update(X0, X_prev)

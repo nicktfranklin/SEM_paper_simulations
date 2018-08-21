@@ -85,6 +85,7 @@ class Wedding(Story):
         self.gifts = ['gift_' + n for n in 'one two three four five six seven eight nine ten'.split()]
 
         # define an embedding dictionary
+        seed = np.random.randint(10**6)  # draw a random number to later use as a seed to preserve randomness
         np.random.seed(embedding_seed)  # fix the seed for repeatability
 
         self.role_embeddings = {w: np.random.randn(1, d) for w in self.word_tags}
@@ -125,10 +126,11 @@ class Wedding(Story):
             for w in self.gifts
         })
 
-        # scale the variance of the features of the embedding space
-        self.filler_embeddings = {k: v / np.sqrt(2. * d) for k, v in self.filler_embeddings.iteritems()}
+        # scale the variance of the features of the embedding space. This is really, really important! as it
+        # determines the magnitude of the likelihood function (along with the likelihood noise)
+        self.filler_embeddings = {k: v / d for k, v in self.filler_embeddings.iteritems()}
 
-        np.random.seed()  # reset the random seed now that the embeddings are drawn
+        np.random.seed(seed)  # reset the random seed now that the embeddings are drawn
 
         # make a word list for all of the embeddings
         self.words = self.filler_embeddings.keys()

@@ -68,7 +68,7 @@ def evaluate(X, y, Omega, K=None, number=0, save=False, list_event_boundaries=No
     if K is None:
         K = X.shape[0] / 2
 
-    sem.run(X, K=K, list_event_boundaries=list_event_boundaries)
+    sem.run(X, K=K)
 
     y_hat = np.argmax(sem.results.post, axis=1)
 
