@@ -161,9 +161,6 @@ class Gaussian(EventModel):
 
         self.f_is_trained = True
 
-        self.update_f0(Y)
-        self.f_is_trained = True
-
 
 
 class GaussianRandomWalk(EventModel):
@@ -282,7 +279,6 @@ class LinearDynamicSystem(EventModel):
         return self.f0
 
 
-
 class KerasLDS(EventModel):
 
     def __init__(self, d, var_df0, var_scale0, optimizer='adam', n_epochs=100, init_model=True,
@@ -380,7 +376,6 @@ class KerasLDS(EventModel):
 
     def _predict_f0(self):
         return self._predict_next(np.zeros(self.d))
-
 
 
 class KerasMultiLayerPerceptron(KerasLDS):

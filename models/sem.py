@@ -14,7 +14,7 @@ def get_object_attributes(obj):
 
 
 class Results(object):
-    """ placeholder object to store results """
+    """ placeholder object to store video_results """
     pass
 
 
@@ -66,7 +66,7 @@ class SEM(object):
         self.x_prev = None  # last scene
         self.k_prev = None  # last event type
 
-        # instead of dumping the results, store them to the object
+        # instead of dumping the video_results, store them to the object
         self.results = None
 
     def serialize(self, weights_dir='.'):
@@ -262,8 +262,9 @@ class SEM(object):
         y_hat = np.zeros(np.shape(X))
 
         # debugging functions
-        log_like = np.zeros((N, self.K))
-        log_prior = np.zeros((N, self.K))
+        log_like = np.zeros((N, self.K)) - np.inf
+        log_prior = np.zeros((N, self.K)) - np.inf
+        total_log_loss = 0.0
 
         # this code just controls the presence/absence of a progress bar -- it isn't important
         if progress_bar:
@@ -309,7 +310,7 @@ class SEM(object):
             # update
 
             # this is a diagnostic readout and does not effect the model
-            log_like[n, :len(active)] = lik - np.max(lik)
+            log_like[n, :len(active)] = lik #- np.max(lik)
             log_prior[n, :len(active)] = np.log(prior[:len(active)])
 
             # get the MAP cluster and only update it
@@ -323,6 +324,9 @@ class SEM(object):
                 model = self.event_models[self.k_prev]
                 y_hat[n, :] = model.predict_next(self.x_prev)
                 pe[n] = np.linalg.norm(x_curr - y_hat[n, :])
+
+                # also calculate the log-loss for the observations
+                # total_log_loss += model.predict_next
 
             self.C[K] += 1  # update counts
             # update event model
@@ -345,6 +349,7 @@ class SEM(object):
         self.results.log_prior = log_prior
         self.results.e_hat = np.argmax(post, axis=1)
         self.results.y_hat = y_hat
+        self.results.log_loss = logsumexp(log_like + log_prior, axis=1)
 
         return post
 
