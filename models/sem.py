@@ -14,7 +14,7 @@ def get_object_attributes(obj):
 
 
 class Results(object):
-    """ placeholder object to store video_results """
+    """ placeholder object to store results """
     pass
 
 
@@ -66,7 +66,7 @@ class SEM(object):
         self.x_prev = None  # last scene
         self.k_prev = None  # last event type
 
-        # instead of dumping the video_results, store them to the object
+        # instead of dumping the results, store them to the object
         self.results = None
 
     def serialize(self, weights_dir='.'):
@@ -183,7 +183,7 @@ class SEM(object):
             else:
                 # we're in a new event -> update the initialization point only
                 self.event_models[k].new_token()
-                self.event_models[k].update(np.zeros((1, self.d)), x_curr)
+                self.event_models[k].update_f0(x_curr)
 
             self.C[k] += 1  # update counts
 
@@ -264,7 +264,6 @@ class SEM(object):
         # debugging functions
         log_like = np.zeros((N, self.K)) - np.inf
         log_prior = np.zeros((N, self.K)) - np.inf
-        total_log_loss = 0.0
 
         # this code just controls the presence/absence of a progress bar -- it isn't important
         if progress_bar:
@@ -301,7 +300,7 @@ class SEM(object):
                     lik[k0] = model.likelihood_next(self.x_prev, x_curr)
                     # print "PE, Current Event: {}".format(np.linalg.norm(x_curr - model.predict_next(self.x_prev)))
                 else:
-                    lik[k0] = model.likelihood_next(np.zeros((1, self.d)), x_curr)
+                    lik[k0] = model.likelihood_f0(x_curr)
                     # print "PE, New Event:     {}".format(np.linalg.norm(x_curr - model.predict_f0()))
 
             # posterior
@@ -325,9 +324,6 @@ class SEM(object):
                 y_hat[n, :] = model.predict_next(self.x_prev)
                 pe[n] = np.linalg.norm(x_curr - y_hat[n, :])
 
-                # also calculate the log-loss for the observations
-                # total_log_loss += model.predict_next
-
             self.C[K] += 1  # update counts
             # update event model
             if not event_boundary:
@@ -337,7 +333,7 @@ class SEM(object):
             else:
                 # we're in a new event token -> update the initialization point only
                 self.event_models[K].new_token()
-                self.event_models[K].update(np.zeros((1, self.d)), x_curr)
+                self.event_models[K].update_f0(x_curr)
 
             self.x_prev = x_curr  # store the current scene for next trial
             self.k_prev = K  # store the current event for the next trial
@@ -440,8 +436,7 @@ class SEM(object):
                     event_boundary = False
 
                 if event_boundary:
-                    event_boundary = self.event_models[k_within_event]
-                    _pe[ii] = np.linalg.norm(x_curr - event_boundary.predict_next_generative(np.zeros(1, self.d)))
+                    _pe[ii] = np.linalg.norm(x_curr - self.event_models[k_within_event].predict_f0())
                 else:
                     _pe[ii] = np.linalg.norm(
                         x_curr - self.event_models[k_within_event].predict_next_generative(X[:ii, :]))
@@ -457,7 +452,7 @@ class SEM(object):
                     if not event_boundary:
                         lik[ii, k0] = model.likelihood_sequence(X[:ii, :], x_curr)
                     else:
-                        lik[ii, k0] = model.likelihood_sequence(np.zeros((1, self.d)), x_curr)
+                        lik[ii, k0] = model.likelihood_f0(x_curr)
 
                 # for the purpose of calculating a prediction error and a prediction error only, calculate
                 # a within event estimate of the event type (the real estimate is at the end of the event,
@@ -479,7 +474,7 @@ class SEM(object):
             self.k_prev = k
 
             # update the winning model's estimate
-            self.event_models[k].update(np.zeros((1, self.d)), X[0])
+            self.event_models[k].update_f0(X[0])
             X_prev = X[0]
             for X0 in X[1:]:
                 self.event_models[k].update(X0, X_prev)

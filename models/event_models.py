@@ -1,13 +1,17 @@
 import tensorflow as tf
 import numpy as np
 from utils import unroll_data
+import keras
 from keras.models import Sequential
 from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM, LeakyReLU
 from keras import regularizers
 from scipy.stats import multivariate_normal as mvnormal
 
+print("TensorFlow Version: {}".format(tf.__version__))
+print("Keras      Version: {}".format(keras.__version__))
 
-def map_variance(samples, df0, scale0, mu=None):
+
+def map_variance(samples, df0, scale0):
     """
     This estimator assumes an scaled inverse-chi squared prior over the
     variance and a Gaussian likelihood. The parameters d and scale
@@ -26,8 +30,6 @@ def map_variance(samples, df0, scale0, mu=None):
     else:
         n = np.shape(samples)[0]
         d = 1
-    if mu is None:
-        mu = np.zeros(d)
 
     v = np.var(samples, axis=0)
     df = df0 + n
@@ -46,6 +48,7 @@ class EventModel(object):
         """
         self.d = d
         self.f_is_trained = False
+        self.f0_is_trained = False
 
         # initialize the covariance matrix
         self.Sigma = np.eye(d) * 0.1
@@ -63,7 +66,7 @@ class EventModel(object):
         None
 
         """
-        self.f_is_trained = True
+        pass
 
     def predict_next(self, X):
         """
@@ -92,7 +95,6 @@ class EventModel(object):
         Y_hat = self.predict_next_generative(X)
         return mvnormal.logpdf(Y.reshape(-1), mean=Y_hat.reshape(-1), cov=self.Sigma)
 
-
     def _predict_next(self, X):
         """
         Internal function
@@ -120,8 +122,10 @@ class EventModel(object):
         return self._predict_f0()
 
     def _predict_f0(self):
-        return np.zeros(self.d)
+        return self._predict_next(np.zeros(self.d))
 
+    def update_f0(self, Y):
+        pass
 
     def close(self):
         pass
@@ -158,9 +162,19 @@ class Gaussian(EventModel):
         return self.mu
 
     def update(self, X, Y):
-
+        self.update_f0(Y)
         self.f_is_trained = True
 
+    def _predict_f0(self):
+        return self._predict_next(np.zeros(self.d))
+
+    def update_f0(self, Y):
+        self.history = np.concatenate([self.history, Y.reshape(1, -1)])
+        self.mu = np.mean(self.history, axis=0)
+
+        n = np.shape(self.history)[0]
+        if n > 1:
+            self.Sigma = np.eye(self.d) * map_variance(self.history, self.var_df0, self.var_scale0)
 
 
 class GaussianRandomWalk(EventModel):
@@ -180,13 +194,16 @@ class GaussianRandomWalk(EventModel):
             return np.copy(X)
 
     def update(self, X, Y):
-
-        self.f_is_trained = True
-
         self.pe = np.concatenate([self.pe, (Y - X).reshape(1, -1)])
         if np.shape(self.pe)[0] > 1:
             self.Sigma = np.eye(self.d) * map_variance(self.pe, self.var_df0, self.var_scale0)
 
+    def _predict_f0(self):
+        return self._predict_next(np.zeros(self.d))
+
+    def update_f0(self, Y):
+        self.pe = np.concatenate([self.pe, np.reshape(Y, (1, -1))])
+        self.f_is_trained = True
 
 
 class LinearDynamicSystem(EventModel):
@@ -211,7 +228,6 @@ class LinearDynamicSystem(EventModel):
         self.history_pe = np.zeros((0, d))
         self.var_df0 = var_df0
         self.var_scale0 = var_scale0
-        # self.prior_lr = prior_lr
         self.eta = eta
 
     def _predict_next(self, X):
@@ -250,9 +266,6 @@ class LinearDynamicSystem(EventModel):
         Y: np.array, length D
             observed sucessor state vector
         """
-
-        self.f_is_trained = True
-
         Y_hat = np.reshape(self._predict_next(X), (Y.shape[0]))
 
         # calculate eta
@@ -277,6 +290,10 @@ class LinearDynamicSystem(EventModel):
 
     def _predict_f0(self):
         return self.f0
+
+    def update_f0(self, Y):
+        self.update(np.zeros(np.shape(Y)), Y)
+        self.f0 = self.bias
 
 
 class KerasLDS(EventModel):
@@ -334,8 +351,6 @@ class KerasLDS(EventModel):
         self.model.fit(self.x_train, self.y_train, verbose=0, epochs=self.n_epochs, shuffle=True)
 
     def update(self, X, Y):
-        self.f_is_trained = True
-
         if np.ndim(X) == 1:
             N = 1
         else:
@@ -376,6 +391,10 @@ class KerasLDS(EventModel):
 
     def _predict_f0(self):
         return self._predict_next(np.zeros(self.d))
+
+    def update_f0(self, Y):
+        self.update(np.zeros(self.d), Y)
+        self.f0_is_trained = True
 
 
 class KerasMultiLayerPerceptron(KerasLDS):
@@ -468,9 +487,6 @@ class KerasSRN(KerasLDS):
     # train on a single example
     #
     def update(self, X, Y, update_estimate=True):
-
-        self.f_is_trained = True
-
         if X.ndim > 1:
             X = X[-1, :]  # only consider last example
         assert X.ndim == 1
@@ -489,6 +505,7 @@ class KerasSRN(KerasLDS):
         if update_estimate:
             self.estimate()
 
+        self.f_is_trained = True
 
         # cache a prediction error term
         Y_hat = self.predict_next(X)
