@@ -5,6 +5,7 @@ import keras
 from keras.models import Sequential
 from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM, LeakyReLU
 from keras import regularizers
+from keras.optimizers import Adam
 from scipy.stats import multivariate_normal as mvnormal
 
 print("TensorFlow Version: {}".format(tf.__version__))
@@ -298,11 +299,14 @@ class LinearDynamicSystem(EventModel):
 
 class KerasLDS(EventModel):
 
-    def __init__(self, d, var_df0, var_scale0, optimizer='adam', n_epochs=100, init_model=True,
+    def __init__(self, d, var_df0, var_scale0, optimizer=None, n_epochs=100, init_model=True,
                  kernel_initializer='glorot_uniform', l2_regularization=0.00):
         EventModel.__init__(self, d)
         self.x_train = np.zeros((0, self.d))  # initialize empty arrays
         self.y_train = np.zeros((0, self.d))
+
+        if optimizer is None:
+            optimizer = Adam(lr=0.01, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
 
         self.compile_opts = dict(optimizer=optimizer, loss='mean_squared_error')
         self.kernel_initializer = kernel_initializer
@@ -400,7 +404,7 @@ class KerasLDS(EventModel):
 class KerasMultiLayerPerceptron(KerasLDS):
 
     def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh',
-                 optimizer='adam', n_epochs=100, init_model=True, kernel_initializer='glorot_uniform',
+                 optimizer=None, n_epochs=100, init_model=True, kernel_initializer='glorot_uniform',
                  l2_regularization=0.00, dropout=0.10):
         KerasLDS.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
                           init_model=False, kernel_initializer=kernel_initializer,
@@ -434,7 +438,7 @@ class KerasSRN(KerasLDS):
     # i.e. each new scene is a single example batch of size 1
 
     def __init__(self, d, var_df0, var_scale0, t=3,
-                 optimizer='adam', n_epochs=100, l2_regularization=0.00, batch_size=32,
+                 optimizer=None, n_epochs=100, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform', init_model=True):
         #
         # D = dimension of single input / output example
@@ -591,7 +595,7 @@ class KerasSRN(KerasLDS):
 
 class KerasRecurrentMLP(KerasSRN):
 
-    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer='adam',
+    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
                  n_epochs=100, dropout=0.10, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform', init_model=True):
 
@@ -627,7 +631,7 @@ class KerasRecurrentMLP(KerasSRN):
 
 class KerasGRU(KerasSRN):
 
-    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer='adam',
+    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
                  n_epochs=100, dropout=0.10, l2_regularization=0.00,batch_size=32,
                  kernel_initializer='glorot_uniform', init_model=True):
 
@@ -663,7 +667,7 @@ class KerasGRU(KerasSRN):
 
 class KerasLSTM(KerasSRN):
 
-    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer='adam',
+    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
                  n_epochs=100, dropout=0.10, l2_regularization=0.00,
                  batch_size=32,
                  kernel_initializer='glorot_uniform', beta=None, init_model=True):
