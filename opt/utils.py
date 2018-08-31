@@ -40,21 +40,21 @@ def generate_random_events(n_events, data_file=None):
     return np.concatenate(X), np.concatenate(y)
 
 
-def evaluate(X, y, Omega, K=None, number=0, save=False, list_event_boundaries=None):
+def evaluate(x, y, omega, k=None, number=0, save=False, list_event_boundaries=None):
     """
 
     Parameters
     ----------
-    X: NxD array
+    x: NxD array
         scene vectors
 
     y: array of length N
         true class labels
 
-    Omega: dict
+    omega: dict
         dictionary of kwargs for the SEM model
 
-    K: int
+    k: int
         maximum number of clusters
 
 
@@ -63,12 +63,12 @@ def evaluate(X, y, Omega, K=None, number=0, save=False, list_event_boundaries=No
         r: int, adjusted rand score
     """
 
-    sem = models.SEM(**Omega)
+    sem = models.SEM(**omega)
 
-    if K is None:
-        K = X.shape[0] / 2
+    if k is None:
+        k = x.shape[0] / 2
 
-    sem.run(X, K=K)
+    sem.run(x, k=k)
 
     y_hat = np.argmax(sem.results.post, axis=1)
 
@@ -77,7 +77,7 @@ def evaluate(X, y, Omega, K=None, number=0, save=False, list_event_boundaries=No
     if save:
         f = open('SEM_sample_%d.save' % number, 'wb')
 
-        pickle.dump({'AdjRandScore': r, 'Omega': Omega}, f)
+        pickle.dump({'AdjRandScore': r, 'Omega': omega}, f)
         f.close()
         return
 

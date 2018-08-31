@@ -80,7 +80,7 @@ class EventModel(object):
 
         return self._predict_next(X)
 
-    def likelihood_f0(self, Y):
+    def log_likelihood_f0(self, Y):
 
         # predict the initial point
         Y_hat = self.predict_f0()
@@ -88,11 +88,11 @@ class EventModel(object):
         # return the probability
         return mvnormal.logpdf(Y.reshape(-1), mean=Y_hat.reshape(-1), cov=self.Sigma)
 
-    def likelihood_next(self, X, Y):
+    def log_likelihood_next(self, X, Y):
         Y_hat = self.predict_next(X)
         return mvnormal.logpdf(Y.reshape(-1), mean=Y_hat.reshape(-1), cov=self.Sigma)
 
-    def likelihood_sequence(self, X, Y):
+    def log_likelihood_sequence(self, X, Y):
         Y_hat = self.predict_next_generative(X)
         return mvnormal.logpdf(Y.reshape(-1), mean=Y_hat.reshape(-1), cov=self.Sigma)
 
