@@ -28,7 +28,7 @@ def segment_compare(event_sequence, comparison_data, f_class, f_opts, lmda=10 **
     }
 
     sem_model = SEM(**Omega)
-    sem_model.run(event_sequence, K=event_sequence.shape[0], leave_progress_bar=False)
+    sem_model.run(event_sequence, k=event_sequence.shape[0], leave_progress_bar=False)
 
     # compare the model segmentation to human data via regression and store the output
 
