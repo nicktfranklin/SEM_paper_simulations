@@ -3,7 +3,7 @@ import numpy as np
 from utils import unroll_data
 import keras
 from keras.models import Sequential
-from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM, LeakyReLU
+from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM, LeakyReLU, BatchNormalization
 from keras import regularizers
 from keras.optimizers import Adam
 from scipy.stats import multivariate_normal as mvnormal
@@ -405,7 +405,7 @@ class KerasMultiLayerPerceptron(KerasLDS):
 
     def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh',
                  optimizer=None, n_epochs=100, init_model=True, kernel_initializer='glorot_uniform',
-                 l2_regularization=0.00, dropout=0.10):
+                 l2_regularization=0.00, dropout=0.50):
         KerasLDS.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
                           init_model=False, kernel_initializer=kernel_initializer,
                           l2_regularization=l2_regularization)
@@ -425,6 +425,21 @@ class KerasMultiLayerPerceptron(KerasLDS):
         self.model.add(Dense(self.n_hidden, input_shape=(D,), activation=self.hidden_act,
                              kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
+        self.model.add(Dropout(self.dropout))
+        self.model.add(Dense(D, activation='linear',
+                             kernel_regularizer=self.kernel_regularizer,
+                             kernel_initializer=self.kernel_initializer))
+        self.model.compile(**self.compile_opts)
+
+
+class KerasMultiLayerPerceptron_BN(KerasMultiLayerPerceptron):
+    def _init_model(self):
+        N, D = self.x_train.shape
+        self.model = Sequential()
+        self.model.add(Dense(self.n_hidden, input_shape=(D,), activation=self.hidden_act,
+                             kernel_regularizer=self.kernel_regularizer,
+                             kernel_initializer=self.kernel_initializer))
+        self.model.add(BatchNormalization())
         self.model.add(Dropout(self.dropout))
         self.model.add(Dense(D, activation='linear',
                              kernel_regularizer=self.kernel_regularizer,
@@ -596,7 +611,7 @@ class KerasSRN(KerasLDS):
 class KerasRecurrentMLP(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
-                 n_epochs=100, dropout=0.10, l2_regularization=0.00, batch_size=32,
+                 n_epochs=100, dropout=0.50, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform', init_model=True):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
@@ -629,10 +644,29 @@ class KerasRecurrentMLP(KerasSRN):
         self.model.compile(**self.compile_opts)
 
 
+class KerasRecurrentMLP_BN(KerasRecurrentMLP):
+
+    def _init_model(self):
+        self.sess = tf.Session()
+
+        self.model = Sequential()
+        # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
+        # input_shape[1] = input_dim; each example is a self.d-dimensional vector
+        self.model.add(SimpleRNN(self.n_hidden, input_shape=(self.t, self.d),
+                                 kernel_regularizer=self.kernel_regularizer,
+                                 kernel_initializer=self.kernel_initializer))
+        self.model.add(LeakyReLU(alpha=0.3))
+        self.model.add(BatchNormalization())
+        self.model.add(Dropout(self.dropout))
+        self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer,
+                  kernel_initializer=self.kernel_initializer))
+        self.model.compile(**self.compile_opts)
+
+
 class KerasGRU(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
-                 n_epochs=100, dropout=0.10, l2_regularization=0.00,batch_size=32,
+                 n_epochs=100, dropout=0.50, l2_regularization=0.00,batch_size=32,
                  kernel_initializer='glorot_uniform', init_model=True):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
@@ -668,9 +702,9 @@ class KerasGRU(KerasSRN):
 class KerasLSTM(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
-                 n_epochs=100, dropout=0.10, l2_regularization=0.00,
+                 n_epochs=100, dropout=0.50, l2_regularization=0.00,
                  batch_size=32,
-                 kernel_initializer='glorot_uniform', beta=None, init_model=True):
+                 kernel_initializer='glorot_uniform', init_model=True):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
                           l2_regularization=l2_regularization, batch_size=batch_size,

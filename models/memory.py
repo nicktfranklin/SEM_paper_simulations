@@ -4,306 +4,177 @@ from scipy.stats import multivariate_normal as mvnorm
 from scipy.special import logsumexp
 
 
-def convert_type_token(list_etypes):
-    """ take in a list of the type index of events and output a series of unique tokens"""
-    prev_type = -1
-    token = -1
-    list_tokens = []
-    for e0 in list_etypes:
-        if e0 != prev_type:
-            prev_type = e0
-            token += 1
-        list_tokens.append(token)
-
-    return list_tokens
+def sample_pmf(pmf):
+    return np.sum(np.cumsum(pmf) < np.random.uniform(0, 1))
 
 
-def reconstruction_single_event(X_mem, event_model, tau=1.0, burn_in=500, n_samples=500, progress_bar=True,
-                                leave_progress_bar=False):
-    """
-    Reconstruct a memory trace from a single big event
+def sample_y_given_x(y_mem, x, b, tau, epsilon):
+    # total number of samples
+    n, d = np.shape(x)
 
-    :param X_mem:
-    :param event_model:
-    :param tau:
-    :param burn_in:
-    :param n_samples:
-    :return:
-    """
+    #
+    y_sample = [None] * n
 
-    n, d = np.shape(X_mem)
+    # create a copy of y_mem for sampling without replacement
+    y_mem_copy = [[x_yi.copy(), t_mem] for (x_yi, t_mem) in y_mem]
 
-    # these are shuffled in order
-    trials = range(0, n)
-    X_sample = []
+    for t in np.random.permutation(range(n)):
 
-    # randomly initialize the sampel of X0 from the corruption process
-    X0 = np.random.randn(n, d) * tau + X_mem
+        # create a probability function over the sample sets
+        log_p = np.zeros(len(y_mem_copy) + 1) - np.inf
+        for ii, (x_yi, t_mem) in enumerate(y_mem_copy):
+            if np.abs(t_mem - t) <= b:
+                log_p[ii] = mvnorm.logpdf(x_yi, mean=x[t, :], cov=np.eye(d) * tau)
+        # the last token is always the null token
+        log_p[-1] = np.log(epsilon)
+        p = np.exp(log_p - logsumexp(log_p))  # normalize and exponentiate
 
-    # loop through the other events in the list
-    if progress_bar:
-        def it_decorator(iterator):
-            return tqdm(iterator, desc='Gibbs', leave=leave_progress_bar)
-    else:
-        def it_decorator(iterator):
-            return iterator
+        # draw a sample
+        ii = sample_pmf(p)
 
-    for ii in it_decorator(range(n_samples + burn_in)):
+        if ii < len(y_mem_copy):
+            # only create a sample for none-None events
+            y_sample[t] = y_mem_copy[ii]
+            y_mem_copy = y_mem_copy[:ii] + y_mem_copy[ii + 1:]  # remove the item from the list of available
 
-        np.random.shuffle(trials)  # randomize the order trials are sampled
+    return y_sample
 
-        for t in trials:
-            # pull the transition function
-            if t > 1:
-                def f(x):
-                    return event_model.predict_next_generative(x)
+
+def sample_e_given_x(x, event_models, alpha, lmda):
+    n, d = np.shape(x)
+
+    # define a special case of the sCRP that caps the number
+    # of clusters at k, the number of event models
+    k = len(event_models)
+    c = np.zeros(k)
+
+    e_prev = None
+    e_sample = [None] * n
+
+    # keep a list of all the previous scenes within the sampled event
+    x_current = np.zeros((1, d))
+
+    # do this as a filtering operation, just via a forward sweep
+    for t in range(n):
+
+        # calculate the CRP prior
+        p_sCRP = c.copy()
+        if e_prev is not None:
+            p_sCRP[e_prev] += lmda
+        p_sCRP += (p_sCRP == 0) * alpha
+        # no need to normalize yet
+
+        # calculate the probability of x_t|x_{1:t-1}
+        p_model = np.zeros(k) - np.inf
+        for idx, e_model in event_models.iteritems():
+            if idx != e_prev:
+                x_t_hat = e_model.predict_next_generative(x_current)
             else:
-                def f(x):
-                    return event_model.predict_f0()
+                x_t_hat = e_model.predict_f0()
+            p_model[idx] = mvnorm.logpdf(x[t, :], mean=x_t_hat.reshape(-1), cov=e_model.Sigma)
 
-            # construct the input vector for the model
-            X_i = X0[:t, :]
+        log_p = p_model + p_sCRP
+        log_p -= logsumexp(log_p)
 
-            # calculate the weighted mean and weighted variance of the posterior
-            # using the event model's estimate and the assumed corruption noise
-            # NOTE: b/c the covariance function is restricted to the form
-            # Sigma = beta * I where beta is a vector, each feature can be treated
-            # as an independent gaussian and combined independently
-            beta = np.diagonal(event_model.Sigma)
-            u = (1. / beta) / (1. / beta + 1. / tau)
-            Sigma = np.eye(d) * (1.0 / (1. / beta + 1. / tau))
+        # draw from the model
+        e_sample[t] = sample_pmf(np.exp(log_p))
 
-            # use the likelihood function to estimate a new sample.
-            # This likelihood function is the product of two Gaussians:
-            #  N(x0_t; f(x0_{1:t-1}), beta_f * I) * N(x0_t; \tilde x_t , beta_mem * I )
-            mu_t = u * f(X_i) + (1 - u) * X_mem[t]
+        # update counters
+        if e_prev == e_sample[t]:
+            x_current = np.concatenate([x_current, x[t, :].reshape(1, -1)])
+        else:
+            x_current = x[t, :].reshape(1, -1)
+        e_prev = e_sample[t]
 
-            # generate a sample from the multivariate normal
-            X0[t, :] = np.random.multivariate_normal(mu_t.flatten(), Sigma)
-
-        if ii >= burn_in:
-            X_sample.append(X0.copy())
-
-    return np.array(X_sample)
+    return e_sample
 
 
-def reconstruction_known_boundaries(X_mem, events_dict, event_tokens, tau=1.0, burn_in=500, n_samples=500):
+def sample_x_given_y_e(x_hat, y, e, event_models, tau):
     """
-    Reconstruct a memory trace from an unordered set of dynamics and event boundaries
+    x_hat: n x d np.array
+        the previous sample, to be updated and returned
 
-    :param X_mem: NxD np.ndarraycorrupted memory trace
-    :param events_dict: dictionary of the form {k: event_model)
-    :param event_tokens: a list of event tokens -- unique id for each event
-    :param tau: float corruption noise
-    :param burn_in: (int) number of samples to discard from Gibbs
-    :param n_samples: number of samples to keep from Gibbs
-    :return:
+    y: list
+        the sequence of ordered memory traces. Each element is
+        either a list of [x_y_mem, t_mem] or None
+
+    e: np.array of length n
+        the sequence of event tokens
+
+    event_models: dict {token: model}
+        trained event models
+
+    tau:
+        memory corruption noise
+
     """
 
-    n, d = np.shape(X_mem)
+    # total number of samples
+    n, d = np.shape(x_hat)
 
-    # these are shuffled in order, and we don't want to make a prediction for the last scene
-    trials = range(0, n)
-    X_sample = []
+    x_hat = x_hat.copy()  # don't want to overwrite the thing outside the loop...
 
-    # randomly initialize the sampel of X0 from the corruption process
-    X0 = np.random.randn(n, d) * tau + X_mem
+    for t in np.random.permutation(range(n)):
+        # pull the active event model
+        e_model = event_models[e[t]]
 
-    # randomly initialize the identity of the event tokens
-    events_keys_function = np.random.permutation(events_dict.keys())
+        # pull all preceding scenes within the event
+        x_idx = np.arange(len(e))[(e == e[t]) & (np.arange(len(e)) < t)]
+        x_prev = np.concatenate([
+            np.zeros((1, d)), x_hat[x_idx, :]
+        ])
 
-    for ii in tqdm(range(n_samples + burn_in), leave=False, desc='Gibbs'):
+        # pull the prediction of the event model given the previous estimates of x
+        f_x = e_model.predict_next_generative(x_prev)
 
-        np.random.shuffle(trials)  # randomize the order trials are sampled
+        # is y_t a null tag?
+        if y[t] is None:
+            x_bar = f_x
+            Sigma = e_model.Sigma
+        else:
+            # calculate noise lambda for each event model
+            u_weight = (1. / np.diag(e_model.Sigma)) / (1. / np.diag(e_model.Sigma) + 1. / tau)
 
-        for t in trials:
+            x_bar = u_weight * f_x + (1 - u_weight) * y[t][0]
+            Sigma = np.eye(d) * 1. / (1. / np.diag(e_model.Sigma) + 1. / tau)
 
-            # pull the transition function associated with the current event-token
-            token = event_tokens[t]
-            token_id = events_keys_function[token]
-            event_model = events_dict[token_id]
-            if token == event_tokens[t - 1]:
-                def f(x):
-                    return event_model.predict_next_generative(x)
-            else:
-                def f(x):
-                    return event_model.predict_f0()
+        # draw a new sample of x_t
+        x_hat[t, :] = mvnorm.rvs(mean=x_bar.reshape(-1), cov=Sigma)
 
-            # construct the input vector for the model
-            X_i = X0[(np.arange(n) < t) & (np.array(event_tokens) == event_tokens[t]), :]
-
-            # calculate the weighted mean and weighted variance of the posterior
-            # using the event model's estimate and the assumed corruption noise
-            # NOTE: b/c the covarinace function is restricted to the form
-            # Sigma = beta * I where beta is a vector, each feature can be treated
-            # as an indepenendent gaussian and combined independently
-            beta = np.diagonal(event_model.Sigma)
-            u = (1. / beta) / (1. / beta + 1. / tau)
-            Sigma = np.eye(d) * (1.0 / (1. / beta + 1. / tau))
-
-            # use the likelihood function to estimate a new sample.
-            # This likelihood function is the product of two gaussians:
-            #  N(x0_t; f(x0_{1:t-1}), beta_f * I) * N(x0_t; \tilde x_t , beta_mem * I )
-            mu_t = u * f(X_i) + (1 - u) * X_mem[t]
-
-            # generate a sample from the multivariate normal
-            X0[t, :] = np.random.multivariate_normal(mu_t.flatten(), Sigma)
-
-        # Here, we sample the events type probability, conditioned on the samples
-
-        # we will sample the event models WITHOUT replacement, so keep track
-        # of the available models (this also speeds things up)
-        available_models = events_dict.keys()
-
-        events_keys_function = np.zeros(len(available_models)) - 1  # reinitialize the key
-
-        for token0 in np.random.permutation(list(set(event_tokens))):
-            # get the likelihood for each token in the set
-            X00 = X0[event_tokens == token0, :]  # pull the relevant scenes
-
-            # initialize the scores. This includes models that are not avialble,
-            # so they have to be initialized at log p(e) = -infty (or np.log(0))
-            scores = np.log(np.zeros(np.max(available_models) + 1))
-
-            # loop through the as yet unassigned models and "score" (log likelihood)
-            for token_id0 in available_models:
-                # pull the corresponding event model
-                e00 = events_dict[token_id0]
-
-                # run the model to generate predictions
-                X00_hat = np.zeros(np.shape(X00))
-                X00_hat[0, :] = e00.predict_f0()
-                for jj in range(1, np.shape(X00)[0]):
-                    X00_hat[jj, :] = e00.predict_next_generative(X00[:jj, :])
-
-                # evaluate the predictions of the model
-                scores[token_id0] = logsumexp(
-                    mvnorm.logpdf(X00 - X00_hat, mean=np.zeros(d), cov=e00.Sigma)
-                )
-
-            # normalize the loglikelihoods and inverse cdf sample
-            pmf_e = np.exp(scores - logsumexp(scores))
-            cmf_e = np.cumsum(pmf_e)
-            e0 = events_dict.keys()[np.sum(cmf_e < np.random.rand())]
-
-            events_keys_function[token0] = e0
-            try:
-                available_models.remove(e0)
-            except:
-                print available_models
-                print e0
-                print pmf_e
-                print scores
-                raise(Exception)
-
-        if ii >= burn_in:
-            X_sample.append(X0.copy())
-
-    return np.array(X_sample)
+    return x_hat
 
 
-def reconstruction_known_boundaries_wrep(X_mem, events_dict, event_tokens, tau=1.0, burn_in=500, n_samples=500):
-    """
-    Reconstruct a memory trace from an unordered set of dynamics and event boundaries
+def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon, b, tau,
+                         n_samples=500, n_burnin=500):
 
-    :param X_mem: NxD np.ndarraycorrupted memory trace
-    :param events_dict: dictionary of the form {k: event_model)
-    :param event_tokens: a list of event tokens -- unique id for each event
-    :param tau: float corruption noise
-    :param burn_in: (int) number of samples to discard from Gibbs
-    :param n_samples: number of samples to keep from Gibbs
-    :return:
-    """
+    # initialize the x_hat with a noisy copy of the memory trace
+    x_hat = np.array([y0[0].copy() for y0 in y_mem])
+    idx = np.arange(0, np.shape(x_hat)[0]) + np.random.randint(-b, b + 1, np.shape(x_hat)[0])
+    idx[idx < 0] = 0
+    idx[idx == len(idx)] -= 1
+    x_hat = x_hat[idx, :]
+    x_hat += tau * np.random.randn(len(y_mem), sem.d)
 
-    n, d = np.shape(X_mem)
+    #
+    e_samples = [None] * n_samples
+    y_samples = [None] * n_samples
+    x_samples = [None] * n_samples
 
-    # these are shuffled in order, and we don't want to make a prediction for the last scene
-    trials = range(0, n)
-    X_sample = []
+    for ii in tqdm(range(n_burnin + n_samples)):
 
-    # randomly initialize the sampel of X0 from the corruption process
-    X0 = np.random.randn(n, d) * tau + X_mem
+        # sample the event models
+        e_hat = sample_e_given_x(x_hat, sem.event_models, memory_alpha, memory_lambda)
 
-    # randomly initialize the identity of the event tokens. This has to be a function that takens in a token
-    # and outputs a type
-    events_keys_function = np.random.randint(0, max(events_dict.keys())+1, size=max(event_tokens) + 1)
+        # sample the memory traces
+        y_sample = sample_y_given_x(y_mem, x_hat, b, tau, memory_epsilon)
 
-    for ii in tqdm(range(n_samples + burn_in), leave=False, desc='Gibbs'):
+        # sample the memory features
+        x_hat = sample_x_given_y_e(x_hat, y_sample, e_hat, sem.event_models, tau)
 
-        np.random.shuffle(trials)  # randomize the order trials are sampled
+        if ii >= n_burnin:
+            e_samples[ii - n_burnin] = e_hat
+            y_samples[ii - n_burnin] = y_sample
+            x_samples[ii - n_burnin] = x_hat
 
-        for t in trials:
+    return y_samples, e_samples, x_samples
 
-            # pull the transition function associated with the current event-token
-            token = event_tokens[t]
-            token_id = events_keys_function[token]
-            event_model = events_dict[token_id]
-            if token == event_tokens[t - 1]:
-                def f(x):
-                    return event_model.predict_next_generative(x)
-            else:
-                def f(x):
-                    return event_model.predict_f0()
-
-            # construct the input vector for the model
-            X_i = X0[(np.arange(n) < t) & (np.array(event_tokens) == event_tokens[t]), :]
-
-            # calculate the weighted mean and weighted variance of the posterior
-            # using the event model's estimate and the assumed corruption noise
-            # NOTE: b/c the covarinace function is restricted to the form
-            # Sigma = beta * I where beta is a vector, each feature can be treated
-            # as an indepenendent gaussian and combined independently
-            beta = np.diagonal(event_model.Sigma)
-            u = (1. / beta) / (1. / beta + 1. / tau)
-            Sigma = np.eye(d) * (1.0 / (1. / beta + 1. / tau))
-
-            # use the likelihood function to estimate a new sample.
-            # This likelihood function is the product of two gaussians:
-            #  N(x0_t; f(x0_{1:t-1}), beta_f * I) * N(x0_t; \tilde x_t , beta_mem * I )
-            mu_t = u * f(X_i) + (1 - u) * X_mem[t]
-
-            # generate a sample from the multivariate normal
-            X0[t, :] = np.random.multivariate_normal(mu_t.flatten(), Sigma)
-
-        # Here, we sample the events type probability, conditioned on the samples
-
-        # we will sample the event models WITH replacement
-        available_models = events_dict.keys()
-
-        events_keys_function = np.zeros(max(event_tokens) + 1) - 1  # reinitialize the key
-
-        for token0 in np.random.permutation(list(set(event_tokens))):
-            # get the likelihood for each token in the set
-            X00 = X0[event_tokens == token0, :]  # pull the relevant scenes
-
-            # initialize the scores. This includes models that are not available,
-            # so they have to be initialized at log p(e) = -infty (or np.log(0))
-            scores = np.log(np.zeros(np.max(available_models) + 1))
-
-            # loop through the as yet unassigned models and "score" (log likelihood)
-            for token_id0 in available_models:
-                # pull the corresponding event model
-                e00 = events_dict[token_id0]
-
-                # run the model to generate predictions
-                X00_hat = np.zeros(np.shape(X00))
-                X00_hat[0, :] = e00.predict_f0()
-                for jj in range(1, np.shape(X00)[0]):
-                    X00_hat[jj, :] = e00.predict_next_generative(X00[:jj, :])
-
-                # evaluate the predictions of the model
-                scores[token_id0] = logsumexp(
-                    mvnorm.logpdf(X00 - X00_hat, mean=np.zeros(d), cov=e00.Sigma)
-                )
-
-            # normalize the loglikelihoods and inverse cdf sample
-            pmf_e = np.exp(scores - logsumexp(scores))
-            cmf_e = np.cumsum(pmf_e)
-            e0 = events_dict.keys()[np.sum(cmf_e < np.random.rand())]
-
-            events_keys_function[token0] = e0
-
-        if ii >= burn_in:
-            X_sample.append(X0.copy())
-
-    return np.array(X_sample)
