@@ -145,22 +145,22 @@ def sample_x_given_y_e(x_hat, y, e, event_models, tau):
 
 
 def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon, b, tau,
-                         n_samples=500, n_burnin=500):
+                         n_samples=500, n_burnin=500, leave_progress_bar=True):
 
     # initialize the x_hat with a noisy copy of the memory trace
     x_hat = np.array([y0[0].copy() for y0 in y_mem])
     idx = np.arange(0, np.shape(x_hat)[0]) + np.random.randint(-b, b + 1, np.shape(x_hat)[0])
     idx[idx < 0] = 0
-    idx[idx == len(idx)] -= 1
+    idx[idx >= len(idx)] = len(idx) - 1
     x_hat = x_hat[idx, :]
-    x_hat += tau * np.random.randn(len(y_mem), sem.d)
+    x_hat += 10 * tau * np.random.randn(len(y_mem), sem.d)
 
     #
     e_samples = [None] * n_samples
     y_samples = [None] * n_samples
     x_samples = [None] * n_samples
 
-    for ii in tqdm(range(n_burnin + n_samples)):
+    for ii in tqdm(range(n_burnin + n_samples), desc='Gibbs Sampler', leave=leave_progress_bar):
 
         # sample the event models
         e_hat = sample_e_given_x(x_hat, sem.event_models, memory_alpha, memory_lambda)
@@ -178,3 +178,33 @@ def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon
 
     return y_samples, e_samples, x_samples
 
+
+# this is a debugging function
+def gibbs_memory_sampler_reduced(y_mem, sem, e_true, memory_epsilon, b, tau,
+                         n_samples=500, n_burnin=500, leave_progress_bar=True):
+
+    # initialize the x_hat with a noisy copy of the memory trace
+    x_hat = np.array([y0[0].copy() for y0 in y_mem])
+    idx = np.arange(0, np.shape(x_hat)[0]) + np.random.randint(-b, b + 1, np.shape(x_hat)[0])
+    idx[idx < 0] = 0
+    idx[idx >= len(idx)] = len(idx) - 1
+    x_hat = x_hat[idx, :]
+    x_hat += 10 * tau * np.random.randn(len(y_mem), sem.d)
+
+    #
+    y_samples = [None] * n_samples
+    x_samples = [None] * n_samples
+
+    for ii in tqdm(range(n_burnin + n_samples), desc='Gibbs Sampler', leave=leave_progress_bar):
+
+        # sample the memory traces
+        y_sample = sample_y_given_x(y_mem, x_hat, b, tau, memory_epsilon)
+
+        # sample the memory features
+        x_hat = sample_x_given_y_e(x_hat, y_sample, e_true, sem.event_models, tau)
+
+        if ii >= n_burnin:
+            y_samples[ii - n_burnin] = y_sample
+            x_samples[ii - n_burnin] = x_hat
+
+    return y_samples, x_samples
