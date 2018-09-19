@@ -100,7 +100,7 @@ def score_transitions(y_samples, y_mem, t):
     return np.mean(acc)
 
 
-def batch(sem_kwargs, gibbs_kwargs, batch_n=0):
+def batch(sem_kwargs, gibbs_kwargs, epsilon_e, batch_n=0):
 
     # generate an experiment
     x_list_items, e_tokens = generate_experiment()
@@ -113,17 +113,20 @@ def batch(sem_kwargs, gibbs_kwargs, batch_n=0):
     sem = SEM(**sem_kwargs)
     sem.run_w_boundaries(list_events=x_list_items, leave_progress_bar=False)
 
+    e_seg = np.reshape([[ii] * np.sum(e_tokens == t, dtype=int) for t, ii in enumerate(sem.results.e_hat)], -1)
+
     # create the corrupted memory trace
     y_mem = list()  # these are list, not sets, for hashability
 
     for t in range(n):
+        x_mem = np.concatenate(x_list_items)[t, :] + np.random.randn(d) * gibbs_kwargs['tau']
+        e_mem = [None, e_seg[t]][np.random.rand() < epsilon_e]
         t_mem = t + np.random.randint(-gibbs_kwargs['b'], gibbs_kwargs['b'] + 1)
-        y_mem.append([np.concatenate(x_list_items)[t, :] + np.random.randn(d) * gibbs_kwargs['tau'], t_mem])
+        y_mem.append([x_mem, e_mem, t_mem])
 
     # add the models to the kwargs
     y_samples, e_samples, x_samples = gibbs_memory_sampler(y_mem, sem, **gibbs_kwargs)
 
-    e_seg = np.reshape([[ii] * np.sum(e_tokens == t, dtype=int) for t, ii in enumerate(sem.results.e_hat)], -1)
 
     results = pd.DataFrame({
         'Batch': [batch_n],

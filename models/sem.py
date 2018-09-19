@@ -432,12 +432,6 @@ class SEM(object):
                 else:
                     event_boundary = False
 
-                if event_boundary:
-                    _pe[ii] = np.linalg.norm(x_curr - self.event_models[k_within_event].predict_f0())
-                else:
-                    _pe[ii] = np.linalg.norm(
-                        x_curr - self.event_models[k_within_event].predict_next_generative(x[:ii, :]))
-
                 # loop through each potentially active event model
                 for k0 in active:
                     if k0 not in self.event_models.keys():
@@ -450,6 +444,12 @@ class SEM(object):
                         lik[ii, k0] = model.log_likelihood_sequence(x[:ii, :], x_curr)
                     else:
                         lik[ii, k0] = model.log_likelihood_f0(x_curr)
+
+                if event_boundary:
+                    _pe[ii] = np.linalg.norm(x_curr - self.event_models[k_within_event].predict_f0())
+                else:
+                    _pe[ii] = np.linalg.norm(
+                        x_curr - self.event_models[k_within_event].predict_next_generative(x[:ii, :]))
 
                 # for the purpose of calculating a prediction error and a prediction error only, calculate
                 # a within event estimate of the event type (the real estimate is at the end of the event,

@@ -66,7 +66,7 @@ def evaluate_non_bound_acc(y_samples, y_mem):
     return np.mean(acc)
 
 
-def batch(sem_kwargs, gibbs_kwargs, batch_number=0):
+def batch(sem_kwargs, gibbs_kwargs, epsilon_e, batch_number=0):
 
     x_list_no_switch, x_list_switch = generate_task()
     n, d = np.concatenate(x_list_switch).shape
@@ -77,17 +77,21 @@ def batch(sem_kwargs, gibbs_kwargs, batch_number=0):
     sem_switch = SEM(**sem_kwargs)
     sem_switch.run_w_boundaries(list_events=x_list_switch, leave_progress_bar=False)
 
-    # create the corrupted memor traces
+    # create the corrupted memory traces
     y_mem_switch = list()  # these are list, not sets, for hashability
     y_mem_noswitch = list()  # these are list, not sets, for hashability
 
     for t in range(n):
+        x_mem = x_list_switch[t / 10][t % 10, :] + np.random.randn(d) * gibbs_kwargs['tau']
+        e_mem = [None, sem_switch.event_models.keys()[t / (n / 2)]][np.random.rand() < epsilon_e]
         t_mem = t + np.random.randint(-gibbs_kwargs['b'], gibbs_kwargs['b'] + 1)
-        y_mem_switch.append([x_list_switch[t / 10][t % 10, :] + np.random.randn(d) * gibbs_kwargs['tau'], t_mem])
-        y_mem_noswitch.append([x_list_no_switch[0][t, :] + np.random.randn(d) * gibbs_kwargs['tau'], t_mem])
+        y_mem_switch.append([x_mem, e_mem, t_mem])
+
+        e_mem = [None, 0][np.random.rand() < epsilon_e]
+        y_mem_noswitch.append([x_mem, e_mem, t_mem])
+
 
     # sample from memory
-
     gibbs_kwargs['y_mem'] = y_mem_switch
     gibbs_kwargs['sem'] = sem_switch
     y_samples, e_samples, x_samples = gibbs_memory_sampler(**gibbs_kwargs)
@@ -170,7 +174,7 @@ def batch_reduced(sem_kwargs, gibbs_kwargs, batch_number=0):
     return results
 
 
-def batch_switch_only(sem_kwargs, gibbs_kwargs, batch_number=0):
+def batch_switch_only(sem_kwargs, gibbs_kwargs, epsilon_e, batch_number=0):
 
     _, x_list_switch = generate_task()
     n, d = np.concatenate(x_list_switch).shape
@@ -182,8 +186,10 @@ def batch_switch_only(sem_kwargs, gibbs_kwargs, batch_number=0):
     y_mem_switch = list()  # these are list, not sets, for hashability
 
     for t in range(n):
+        x_mem = x_list_switch[t / 10][t % 10, :] + np.random.randn(d) * gibbs_kwargs['tau']
+        e_mem = [None, sem_switch.event_models.keys()[t / (n / 2)]][np.random.rand() < epsilon_e]
         t_mem = t + np.random.randint(-gibbs_kwargs['b'], gibbs_kwargs['b'] + 1)
-        y_mem_switch.append([x_list_switch[t / 10][t % 10, :] + np.random.randn(d) * gibbs_kwargs['tau'], t_mem])
+        y_mem_switch.append([x_mem, e_mem, t_mem])
 
     # sample from memory
 
