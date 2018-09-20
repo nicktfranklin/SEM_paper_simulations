@@ -193,7 +193,7 @@ def sample_x_given_y_e(x_hat, y, e, event_models, tau):
 
 
 def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon, b, tau,
-                         n_samples=500, n_burnin=500, leave_progress_bar=True):
+                         n_samples=100, n_burnin=250, leave_progress_bar=True):
 
     # initialize the x_hat with a noisy copy of the memory trace
     # x_hat = np.array([y0[0].copy() for y0 in y_mem])
