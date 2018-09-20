@@ -24,7 +24,7 @@ class SEM(object):
     in python. More documentation to come!
     """
 
-    def __init__(self, lmda=1., alfa=10.0, f_class=None, f_opts=None, ):
+    def __init__(self, lmda=1., alfa=10.0, f_class=None, f_opts=None):
         """
         Parameters
         ----------
@@ -343,6 +343,119 @@ class SEM(object):
 
         return post
 
+    def update_single_event(self, x):
+        """
+
+        :param x: this is an n x d array of the n scenes in an event
+        :return:
+        """
+
+        self.k += 1
+
+        # pull the relevant items from the results
+        if self.results is None:
+            self.results = Results()
+            post = np.zeros((1, self.k))
+            log_like = np.zeros((1, self.k)) - np.inf
+            log_prior = np.zeros((1, self.k)) - np.inf
+
+        else:
+            post = self.results.post
+            log_like = self.results.log_like
+            log_prior = self.results.log_prior
+
+            # extend the size of the posterior, etc
+
+            n, k0 = np.shape(post)
+            while k0 < self.k:
+                post = np.concatenate([post, np.zeros((n, 1))], axis=1)
+                log_like = np.concatenate([log_like, np.zeros((n, 1))], axis=1)
+                log_prior = np.concatenate([log_prior, np.zeros((n, 1))], axis=1)
+                n, k0 = np.shape(post)
+
+            # extend the size of the posterior, etc
+            post = np.concatenate([post, np.zeros((1, self.k))], axis=0)
+            log_like = np.concatenate([log_like, np.zeros((1, self.k)) - np.inf], axis=0)
+            log_prior = np.concatenate([log_prior, np.zeros((1, self.k)) - np.inf], axis=0)
+
+        # calculate sCRP prior
+        prior = self._calculate_prior_from_counts(self.k_prev)
+
+        # likelihood
+        active = np.nonzero(prior)[0]
+        lik = np.zeros((np.shape(x)[0], len(active)))
+
+        # again, this is for diagnostics only, but also keep track of the within event posterior
+        _pe = np.zeros(np.shape(x)[0])
+        k_within_event = np.argmax(prior)  # prior to the first scene within an event having been observed, the
+        # prior determines what the event type will be
+
+        for ii, x_curr in enumerate(x):
+
+            # we need to maintain a distribution over possible event types for the current events --
+            # this gets locked down after termination of the event.
+            # Also: none of the event models can be updated until *after* the event has been observed
+
+            # special case the first scene within the event
+            if ii == 0:
+                event_boundary = True
+            else:
+                event_boundary = False
+
+            # loop through each potentially active event model
+            for k0 in active:
+                if k0 not in self.event_models.keys():
+                    self.event_models[k0] = self.f_class(self.d, **self.f_opts)
+
+                # get the log likelihood for each event model
+                model = self.event_models[k0]
+
+                if not event_boundary:
+                    lik[ii, k0] = model.log_likelihood_sequence(x[:ii, :], x_curr)
+                else:
+                    lik[ii, k0] = model.log_likelihood_f0(x_curr)
+
+            if event_boundary:
+                _pe[ii] = np.linalg.norm(x_curr - self.event_models[k_within_event].predict_f0())
+            else:
+                _pe[ii] = np.linalg.norm(
+                    x_curr - self.event_models[k_within_event].predict_next_generative(x[:ii, :]))
+
+            # for the purpose of calculating a prediction error and a prediction error only, calculate
+            # a within event estimate of the event type (the real estimate is at the end of the event,
+            # taking into account the accumulated evidence
+            k_within_event = np.argmax(np.sum(lik[:ii+1, :len(active)], axis=0) + np.log(prior[:len(active)]))
+
+        # cache the diagnostic measures
+        log_like[-1, :len(active)] = np.sum(lik, axis=0)
+        log_prior[-1, :len(active)] = np.log(prior[:len(active)])
+
+        # at the end of the event, find the winning model!
+        log_post = log_prior[-1, :len(active)] + log_like[-1, :len(active)]
+        post[-1, :len(active)] = np.exp(log_post - logsumexp(log_post))
+        k = np.argmax(log_post)
+
+        # update the prior
+        self.c[k] += np.shape(x)[0]
+        # cache for next event
+        self.k_prev = k
+
+        # update the winning model's estimate
+        self.event_models[k].update_f0(x[0])
+        x_prev = x[0]
+        for X0 in x[1:]:
+            self.event_models[k].update(X0, x_prev)
+            x_prev = X0
+
+        #
+        # self.results = Results()
+        self.results.post = post
+        self.results.log_like = log_like
+        self.results.log_prior = log_prior
+        self.results.e_hat = np.argmax(post, axis=1)
+        self.results.log_loss = logsumexp(log_like + log_prior, axis=1)
+
+
     def run_w_boundaries(self, list_events, progress_bar=True, leave_progress_bar=True):
         """
         This method is the same as the above except the event boundaries are pre-specified by the experimenter
@@ -402,89 +515,4 @@ class SEM(object):
             self.event_models[0] = self.f_class(self.d, **self.f_opts)  # initialize the first event model
 
         for x in my_it(list_events):
-
-            # extend the size of the posterior, etc
-            post = np.concatenate([post, np.zeros((1, self.k))], axis=0)
-            log_like = np.concatenate([log_like, np.zeros((1, self.k)) - np.inf], axis=0)
-            log_prior = np.concatenate([log_prior, np.zeros((1, self.k)) - np.inf], axis=0)
-
-            # calculate sCRP prior
-            prior = self._calculate_prior_from_counts(self.k_prev)
-
-            # likelihood
-            active = np.nonzero(prior)[0]
-            lik = np.zeros((np.shape(x)[0], len(active)))
-
-            # again, this is for diagnostics only, but also keep track of the within event posterior
-            _pe = np.zeros(np.shape(x)[0])
-            k_within_event = np.argmax(prior)  # prior to the first scene within an event having been observed, the
-            # prior determines what the event type will be
-
-            for ii, x_curr in enumerate(x):
-
-                # we need to maintain a distribution over possible event types for the current events --
-                # this gets locked down after termination of the event.
-                # Also: none of the event models can be updated until *after* the event has been observed
-
-                # special case the first scene within the event
-                if ii == 0:
-                    event_boundary = True
-                else:
-                    event_boundary = False
-
-                # loop through each potentially active event model
-                for k0 in active:
-                    if k0 not in self.event_models.keys():
-                        self.event_models[k0] = self.f_class(self.d, **self.f_opts)
-
-                    # get the log likelihood for each event model
-                    model = self.event_models[k0]
-
-                    if not event_boundary:
-                        lik[ii, k0] = model.log_likelihood_sequence(x[:ii, :], x_curr)
-                    else:
-                        lik[ii, k0] = model.log_likelihood_f0(x_curr)
-
-                if event_boundary:
-                    _pe[ii] = np.linalg.norm(x_curr - self.event_models[k_within_event].predict_f0())
-                else:
-                    _pe[ii] = np.linalg.norm(
-                        x_curr - self.event_models[k_within_event].predict_next_generative(x[:ii, :]))
-
-                # for the purpose of calculating a prediction error and a prediction error only, calculate
-                # a within event estimate of the event type (the real estimate is at the end of the event,
-                # taking into account the accumulated evidence
-                k_within_event = np.argmax(np.sum(lik[:ii+1, :len(active)], axis=0) + np.log(prior[:len(active)]))
-
-            # cache the diagnostic measures
-            log_like[-1, :len(active)] = np.sum(lik, axis=0)
-            log_prior[-1, :len(active)] = np.log(prior[:len(active)])
-
-            # at the end of the event, find the winning model!
-            log_post = log_prior[-1, :len(active)] + log_like[-1, :len(active)]
-            post[-1, :len(active)] = np.exp(log_post - logsumexp(log_post))
-            k = np.argmax(log_post)
-
-            # update the prior
-            self.c[k] += np.shape(x)[0]
-            # cache for next event
-            self.k_prev = k
-
-            # update the winning model's estimate
-            self.event_models[k].update_f0(x[0])
-            x_prev = x[0]
-            for X0 in x[1:]:
-                self.event_models[k].update(X0, x_prev)
-                x_prev = X0
-
-        #
-        self.results = Results()
-        self.results.post = post
-        self.results.pe = pe
-        self.results.log_like = log_like
-        self.results.log_prior = log_prior
-        self.results.e_hat = np.argmax(post, axis=1)
-        self.results.y_hat = y_hat
-        self.results.log_loss = logsumexp(log_like + log_prior, axis=1)
-
-        return post
+            self.update_single_event(x)
