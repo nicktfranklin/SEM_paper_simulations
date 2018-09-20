@@ -351,6 +351,7 @@ class SEM(object):
         """
 
         self.k += 1
+        self._update_state(x, self.k)
 
         # pull the relevant items from the results
         if self.results is None:
@@ -478,8 +479,6 @@ class SEM(object):
         leave_progress_bar: bool
             leave the progress bar after completing?
 
-
-
         Return
         ------
         post: n_e by k array of posterior probabilities
@@ -495,13 +494,6 @@ class SEM(object):
         # initialize
         # initialize arrays -- these are calculated per scene!
         n_scenes = np.shape(np.concatenate(list_events, axis=0))[0]
-        pe = np.zeros(n_scenes)
-        y_hat = np.zeros((n_scenes, self.d))
-
-        # debugging functions -- these are calculated per event!
-        post = np.zeros((0, self.k))
-        log_like = np.zeros((0, self.k)) - np.inf
-        log_prior = np.zeros((0, self.k)) - np.inf
 
         # loop through the other events in the list
         if progress_bar:
