@@ -666,7 +666,7 @@ class KerasRecurrentMLP_BN(KerasRecurrentMLP):
 class KerasGRU(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
-                 n_epochs=100, dropout=0.50, l2_regularization=0.00,batch_size=32,
+                 n_epochs=100, dropout=0.50, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform', init_model=True):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
