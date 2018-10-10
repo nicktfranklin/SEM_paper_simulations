@@ -51,7 +51,7 @@ def evaluate_seg(e_samples, e_true):
 
 def hash_y(y):
     if y is not None:
-        return np.concatenate([y[0], [y[1]]])
+        return np.concatenate([y[0], [y[1]], [y[2]]])
     else:
         return y
 
@@ -126,7 +126,6 @@ def batch(sem_kwargs, gibbs_kwargs, epsilon_e, batch_n=0):
 
     # add the models to the kwargs
     y_samples, e_samples, x_samples = gibbs_memory_sampler(y_mem, sem, **gibbs_kwargs)
-
 
     results = pd.DataFrame({
         'Batch': [batch_n],
