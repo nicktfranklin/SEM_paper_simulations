@@ -170,7 +170,7 @@ def segment_compare(event_sequence, comparison_data, f_class, f_opts, lmda=10 **
 
 
 def main(df0=10, scale0=0.3, l2_regularization=0.3, dropout=0.1, t=10, data_path=None,
-    optimizer=None, output_id_tag = None):
+         optimizer=None, output_id_tag=None, n_epochs=100):
 
     if data_path is None:
         data_path = './'
@@ -213,7 +213,8 @@ def main(df0=10, scale0=0.3, l2_regularization=0.3, dropout=0.1, t=10, data_path
     ####### LDS Events #########
     f_class = KerasLDS
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                optimizer=optimizer)
+                optimizer=optimizer, n_epochs=n_epochs,
+                )
     args = [event_sequence, comparison_data, f_class, f_opts]
 
     sys.stdout.write('Running LDS\n')
@@ -224,7 +225,7 @@ def main(df0=10, scale0=0.3, l2_regularization=0.3, dropout=0.1, t=10, data_path
     ####### MLP Events #########
     f_class = KerasMultiLayerPerceptron
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                  dropout=dropout, optimizer=optimizer)
+                  dropout=dropout, optimizer=optimizer,  n_epochs=n_epochs)
     args = [event_sequence, comparison_data, f_class, f_opts]
 
     res = []
@@ -236,7 +237,7 @@ def main(df0=10, scale0=0.3, l2_regularization=0.3, dropout=0.1, t=10, data_path
     ####### SRN Events #########
     f_class = KerasRecurrentMLP
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                  dropout=dropout, t=t, optimizer=optimizer)
+                  dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs)
     args = [event_sequence, comparison_data, f_class, f_opts]
 
     sys.stdout.write('Running RNN\n')
@@ -247,7 +248,7 @@ def main(df0=10, scale0=0.3, l2_regularization=0.3, dropout=0.1, t=10, data_path
     ####### GRU #########
     f_class = KerasGRU
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                  dropout=dropout, t=t, optimizer=optimizer)
+                  dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs)
     args = [event_sequence, comparison_data, f_class, f_opts]
 
     sys.stdout.write('Running GRU\n')
@@ -258,7 +259,7 @@ def main(df0=10, scale0=0.3, l2_regularization=0.3, dropout=0.1, t=10, data_path
     ####### LSTM #########
     f_class = KerasLSTM
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                  dropout=dropout, t=t, optimizer=optimizer)
+                  dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs)
     args = [event_sequence, comparison_data, f_class, f_opts]
 
     sys.stdout.write('Running LSTM\n')
