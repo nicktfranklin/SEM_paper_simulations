@@ -109,7 +109,12 @@ def sample_e_given_x_y(x, y, event_models, alpha, lmda):
             p_sCRP = c.copy()
             if e_prev is not None:
                 p_sCRP[e_prev] += lmda
-            p_sCRP += (p_sCRP == 0) * alpha
+
+            # add the alpha value to the first unvisited cluster
+            # (using argmax to get the first non-zero element)
+            if any(p_sCRP == 0):
+                idx = np.argmax(p_sCRP == 0)
+                p_sCRP[idx] = alpha
             # no need to normalize yet
 
             # calculate the probability of x_t|x_{1:t-1}
@@ -121,7 +126,7 @@ def sample_e_given_x_y(x, y, event_models, alpha, lmda):
                     x_t_hat = e_model.predict_f0()
                 p_model[idx] = mvnorm.logpdf(x[t, :], mean=x_t_hat.reshape(-1), cov=e_model.Sigma)
 
-            log_p = p_model + p_sCRP
+            log_p = p_model + np.log(p_sCRP)
             log_p -= logsumexp(log_p)
 
             # draw from the model
@@ -133,6 +138,9 @@ def sample_e_given_x_y(x, y, event_models, alpha, lmda):
             else:
                 x_current = x[t, :].reshape(1, -1)
         e_prev = e_sample[t]
+
+        # update the counts!
+        c[e_sample[t]] += 1
 
     return e_sample
 
@@ -193,15 +201,7 @@ def sample_x_given_y_e(x_hat, y, e, event_models, tau):
 
 
 def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon, b, tau,
-                         n_samples=100, n_burnin=250, leave_progress_bar=True):
-
-    # initialize the x_hat with a noisy copy of the memory trace
-    # x_hat = np.array([y0[0].copy() for y0 in y_mem])
-    # idx = np.arange(0, np.shape(x_hat)[0]) + np.random.randint(-b, b + 1, np.shape(x_hat)[0])
-    # idx[idx < 0] = 0
-    # idx[idx >= len(idx)] = len(idx) - 1
-    # x_hat = x_hat[idx, :]
-    # x_hat += 10 * tau * np.random.randn(len(y_mem), sem.d)
+                         n_samples=100, n_burnin=250, progress_bar=True, leave_progress_bar=True):
 
     d = np.shape(y_mem[0][0])[0]
     n = len(y_mem)
@@ -215,7 +215,15 @@ def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon
     x_sample = init_x_sample_cond_y(y_sample, n, d, tau)
     e_sample = sample_e_given_x_y(x_sample, y_sample, sem.event_models, memory_alpha, memory_lambda)
 
-    for ii in tqdm(range(n_burnin + n_samples), desc='Gibbs Sampler', leave=leave_progress_bar):
+    # loop through the other events in the list
+    if progress_bar:
+        def my_it(iterator):
+            return tqdm(iterator, desc='Gibbs Sampler', leave=leave_progress_bar)
+    else:
+        def my_it(iterator):
+            return iterator
+
+    for ii in my_it(range(n_burnin + n_samples)):
 
         # sample the memory features
         x_sample = sample_x_given_y_e(x_sample, y_sample, e_sample, sem.event_models, tau)
@@ -232,4 +240,40 @@ def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon
             x_samples[ii - n_burnin] = x_sample
 
     return y_samples, e_samples, x_samples
+
+
+def gibbs_memory_sampler_given_e(y_mem, sem, e_true, memory_epsilon, b, tau,
+                         n_samples=100, n_burnin=250, progress_bar=True, leave_progress_bar=True):
+
+    d = np.shape(y_mem[0][0])[0]
+    n = len(y_mem)
+
+    #
+    y_samples = [None] * n_samples
+    x_samples = [None] * n_samples
+
+    y_sample = init_y_sample(y_mem, b, memory_epsilon)
+    x_sample = init_x_sample_cond_y(y_sample, n, d, tau)
+
+    # loop through the other events in the list
+    if progress_bar:
+        def my_it(iterator):
+            return tqdm(iterator, desc='Gibbs Sampler', leave=leave_progress_bar)
+    else:
+        def my_it(iterator):
+            return iterator
+
+    for ii in my_it(range(n_burnin + n_samples)):
+
+        # sample the memory features
+        x_sample = sample_x_given_y_e(x_sample, y_sample, e_true, sem.event_models, tau)
+
+        # sample the memory traces
+        y_sample = sample_y_given_x_e(y_mem, x_sample, e_true, b, tau, memory_epsilon)
+
+        if ii >= n_burnin:
+            y_samples[ii - n_burnin] = y_sample
+            x_samples[ii - n_burnin] = x_sample
+
+    return y_samples, x_samples
 
