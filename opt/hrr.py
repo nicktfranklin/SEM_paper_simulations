@@ -71,7 +71,7 @@ def embed(n, d, distr='spikeslab_gaussian', param=None):
 
 
 def encode(a, b):
-    return normalize(conv_circ(a, b, np.size(a)))
+    return conv_circ(a, b, np.size(a))
 
 
 def embed_onehot(n, d):
@@ -83,4 +83,4 @@ def embed_onehot(n, d):
 
 def decode(a, b):
     c = np.real(np.fft.ifft(np.fft.fft(a, np.size(a)) * np.conj(np.fft.fft(b, np.size(a)))))
-    return normalize(c / np.size(a))
+    return c / np.size(a)
