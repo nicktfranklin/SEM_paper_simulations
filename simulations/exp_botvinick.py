@@ -103,15 +103,20 @@ def hash_y(y):
     else:
         return y
 
+def get_seq_from_sample(x_samples, x_true, s):
 
-def get_seq_from_sample(y_samples, y_mem, s):
+
     seqs = []
-    y_key = [hash_y(y_mem[ii]) for ii in range(6)]
-    for y_sample in y_samples:
-        def get_position(t):
-            return np.arange(6)[y_key == hash_y(y_sample[t])][0]
-        seqs.append([get_position(t) for t in range(6)])
-    return [np.array(s)[np.array(seq0)] for seq0 in seqs]
+    for x_sample in x_samples:
+        # create a permuation of all of the original scene items and calculate the distance
+        # Note: by definition the permutation sequence [0, 1, 2, 3, 4, 5] is always the correct
+        # order and corresponds to the ordering [s0, s1, s2, s3, s4, s5].
+        all_orders = list(permutations(range(0, 6)))
+        distances = [np.linalg.norm(x_sample.reshape(-1) - x_true[order, :].reshape(-1)) for order in all_orders]
+        permutation_order = all_orders[np.argmin(distances)]
+
+        seqs.append([s[ii] for ii in permutation_order])
+    return seqs
 
 
 def pretrain_sess(sem, stim_gen, n_stim=5):
@@ -152,11 +157,12 @@ def batch(sem, stim_gen, gibbs_kwargs, n_test=25):
         # reconstruct
         gibbs_kwargs['y_mem'] = y_mem
         gibbs_kwargs['sem'] = sem
-        y_samples, e_samples, x_samples = gibbs_memory_sampler(**gibbs_kwargs)
-        x_samples = np.array(x_samples)
+        gibbs_kwargs['e_true'] = [sem.results.e_hat[-1]] * n_items
+        y_samples, x_samples = gibbs_memory_sampler_given_e(**gibbs_kwargs)
 
         # reconstruct the sequence from the sample!
-        seqs = get_seq_from_sample(y_samples, y_mem, s)
+        # seqs = get_seq_from_sample(y_samples, y_mem, s)
+        seqs = get_seq_from_sample(x_samples, x, s)
 
         # get an average goodness for errors!
         goodness_recon = np.zeros(gibbs_kwargs['n_samples'])
@@ -180,3 +186,77 @@ def batch(sem, stim_gen, gibbs_kwargs, n_test=25):
         propor_regularization[itt] = np.mean(goodness_recon[acc_recon == False] > goodness[itt])
 
     return goodness, acc, err_goodness, propor_regularization
+
+
+def main():
+    # SEM parameters
+    df0 = 20
+    scale0 = 3.
+
+    mode = df0 * scale0 / (df0 + 2)
+    print("Prior variance (mode): {}".format(mode))
+    s = generate_exp()
+    x = vectorize_seq(s)
+    print("Median Feature variance: {}".format(np.median(np.var(x, axis=0))))
+
+    lmda = 1.0  # stickyness parameter
+    alfa = 1.  # concentration parameter
+
+    # f_class = KerasLSTM
+    f_class = KerasMultiLayerPerceptron
+    f_opts = dict(var_scale0=scale0, var_df0=df0)
+
+    # create the corrupted memory trace
+    # noise parameters
+    b = 1
+    tau = 0.05
+    print("tau: {}".format(tau))
+
+    # set the parameters for the Gibbs sampler
+    gibbs_kwargs = dict(
+        #     memory_alpha = 0.1,
+        #     memory_lambda = 1.0,
+        memory_epsilon=np.exp(-11),
+        b=b,  # re-defined here for completeness
+        tau=tau,  # ibid
+        n_samples=250,
+        n_burnin=100,
+        progress_bar=False,
+    )
+
+    sem_kwargs = dict(
+        lmda=lmda, alfa=alfa, f_class=f_class,
+        f_opts=f_opts
+    )
+
+    # exp[eriment parameters
+
+    n_sess = 1
+    trials_per_sess = 750
+    n_test = 250
+    n_batch = 25
+
+    def batch_exp(iteration=0):
+        sem = SEM(**sem_kwargs)
+        pretrain_sess(sem, generate_exp, n_stim=n_sess * trials_per_sess)
+        goodness, acc, err_goodness, propor_regularization = batch(sem, generate_exp, gibbs_kwargs, n_test=n_test)
+
+        df = pd.DataFrame({
+            'Stimulus goodness': goodness,
+            'Proportion correct': acc,
+            'Error Response goodness (mean)': err_goodness,
+            'Proportion regularizations': propor_regularization,
+            'iteration': [iteration] * len(goodness),
+        })
+        return df
+
+    res = []
+    for ii in tqdm(n_batch, desc='OuterLoop', leave=True):
+        res.append(batch_exp(ii))
+    res = pd.concat(res)
+
+
+    res.to_pickle('exp_botvinick_sim.pkl')
+
+if __name__ == '__main__':
+    main()
