@@ -343,41 +343,45 @@ class SEM(object):
 
         return post
 
-    def update_single_event(self, x):
+    def update_single_event(self, x, update=True):
         """
 
         :param x: this is an n x d array of the n scenes in an event
+        :param update: boolean (default True) update the prior and posterior of the event model
         :return:
         """
+        if update:
+            self.k += 1
+            self._update_state(x, self.k)
 
-        self.k += 1
-        self._update_state(x, self.k)
+            # pull the relevant items from the results
+            if self.results is None:
+                self.results = Results()
+                post = np.zeros((1, self.k))
+                log_like = np.zeros((1, self.k)) - np.inf
+                log_prior = np.zeros((1, self.k)) - np.inf
 
-        # pull the relevant items from the results
-        if self.results is None:
-            self.results = Results()
-            post = np.zeros((1, self.k))
+            else:
+                post = self.results.post
+                log_like = self.results.log_like
+                log_prior = self.results.log_prior
+
+                # extend the size of the posterior, etc
+
+                n, k0 = np.shape(post)
+                while k0 < self.k:
+                    post = np.concatenate([post, np.zeros((n, 1))], axis=1)
+                    log_like = np.concatenate([log_like, np.zeros((n, 1))], axis=1)
+                    log_prior = np.concatenate([log_prior, np.zeros((n, 1))], axis=1)
+                    n, k0 = np.shape(post)
+
+                # extend the size of the posterior, etc
+                post = np.concatenate([post, np.zeros((1, self.k))], axis=0)
+                log_like = np.concatenate([log_like, np.zeros((1, self.k)) - np.inf], axis=0)
+                log_prior = np.concatenate([log_prior, np.zeros((1, self.k)) - np.inf], axis=0)
+        else:
             log_like = np.zeros((1, self.k)) - np.inf
             log_prior = np.zeros((1, self.k)) - np.inf
-
-        else:
-            post = self.results.post
-            log_like = self.results.log_like
-            log_prior = self.results.log_prior
-
-            # extend the size of the posterior, etc
-
-            n, k0 = np.shape(post)
-            while k0 < self.k:
-                post = np.concatenate([post, np.zeros((n, 1))], axis=1)
-                log_like = np.concatenate([log_like, np.zeros((n, 1))], axis=1)
-                log_prior = np.concatenate([log_prior, np.zeros((n, 1))], axis=1)
-                n, k0 = np.shape(post)
-
-            # extend the size of the posterior, etc
-            post = np.concatenate([post, np.zeros((1, self.k))], axis=0)
-            log_like = np.concatenate([log_like, np.zeros((1, self.k)) - np.inf], axis=0)
-            log_prior = np.concatenate([log_prior, np.zeros((1, self.k)) - np.inf], axis=0)
 
         # calculate sCRP prior
         prior = self._calculate_prior_from_counts(self.k_prev)
@@ -386,8 +390,9 @@ class SEM(object):
         active = np.nonzero(prior)[0]
         lik = np.zeros((np.shape(x)[0], len(active)))
 
-        # again, this is for diagnostics only, but also keep track of the within event posterior
-        _pe = np.zeros(np.shape(x)[0])
+        # again, this is a readout of the model only and not used for updating,
+        # but also keep track of the within event posterior
+        map_prediction = np.zeros(np.shape(x))
         k_within_event = np.argmax(prior)  # prior to the first scene within an event having been observed, the
         # prior determines what the event type will be
 
@@ -417,10 +422,9 @@ class SEM(object):
                     lik[ii, k0] = model.log_likelihood_f0(x_curr)
 
             if event_boundary:
-                _pe[ii] = np.linalg.norm(x_curr - self.event_models[k_within_event].predict_f0())
+                map_prediction[ii, :] = self.event_models[k_within_event].predict_f0()
             else:
-                _pe[ii] = np.linalg.norm(
-                    x_curr - self.event_models[k_within_event].predict_next_generative(x[:ii, :]))
+                map_prediction[ii, :] = self.event_models[k_within_event].predict_next_generative(x[:ii, :])
 
             # for the purpose of calculating a prediction error and a prediction error only, calculate
             # a within event estimate of the event type (the real estimate is at the end of the event,
@@ -431,31 +435,46 @@ class SEM(object):
         log_like[-1, :len(active)] = np.sum(lik, axis=0)
         log_prior[-1, :len(active)] = np.log(prior[:len(active)])
 
-        # at the end of the event, find the winning model!
-        log_post = log_prior[-1, :len(active)] + log_like[-1, :len(active)]
-        post[-1, :len(active)] = np.exp(log_post - logsumexp(log_post))
-        k = np.argmax(log_post)
+        # calculate surprise
+        bayesian_surprise = logsumexp(lik + np.tile(log_prior[-1, :len(active)], (np.shape(lik)[0], 1)), axis=1)
 
-        # update the prior
-        self.c[k] += np.shape(x)[0]
-        # cache for next event
-        self.k_prev = k
+        if update:
 
-        # update the winning model's estimate
-        self.event_models[k].update_f0(x[0])
-        x_prev = x[0]
-        for X0 in x[1:]:
-            self.event_models[k].update(X0, x_prev)
-            x_prev = X0
+            # at the end of the event, find the winning model!
+            log_post = log_prior[-1, :len(active)] + log_like[-1, :len(active)]
+            post[-1, :len(active)] = np.exp(log_post - logsumexp(log_post))
+            k = np.argmax(log_post)
 
-        #
-        # self.results = Results()
-        self.results.post = post
-        self.results.log_like = log_like
-        self.results.log_prior = log_prior
-        self.results.e_hat = np.argmax(post, axis=1)
-        self.results.log_loss = logsumexp(log_like + log_prior, axis=1)
+            # update the prior
+            self.c[k] += np.shape(x)[0]
+            # cache for next event
+            self.k_prev = k
 
+            # update the winning model's estimate
+            self.event_models[k].update_f0(x[0])
+            x_prev = x[0]
+            for X0 in x[1:]:
+                self.event_models[k].update(X0, x_prev)
+                x_prev = X0
+
+            # self.results = Results()
+            self.results.post = post
+            self.results.log_like = log_like
+            self.results.log_prior = log_prior
+            self.results.e_hat = np.argmax(post, axis=1)
+            self.results.log_loss = logsumexp(log_like + log_prior, axis=1)
+
+        return bayesian_surprise, map_prediction
+
+    def init_for_boundaries(self, list_events):
+        # update internal state
+
+        k = len(list_events)
+        self._update_state(np.concatenate(list_events, axis=0), k)
+        del k  # use self.k and self.d
+
+        if self.k_prev is None:
+            self.event_models[0] = self.f_class(self.d, **self.f_opts)  # initialize the first event model
 
     def run_w_boundaries(self, list_events, progress_bar=True, leave_progress_bar=True):
         """
@@ -485,16 +504,6 @@ class SEM(object):
 
         """
 
-        # update internal state
-
-        k = len(list_events)
-        self._update_state(np.concatenate(list_events, axis=0), k)
-        del k  # use self.k and self.d
-
-        # initialize
-        # initialize arrays -- these are calculated per scene!
-        n_scenes = np.shape(np.concatenate(list_events, axis=0))[0]
-
         # loop through the other events in the list
         if progress_bar:
             def my_it(iterator):
@@ -503,8 +512,7 @@ class SEM(object):
             def my_it(iterator):
                 return iterator
 
-        if self.k_prev is None:
-            self.event_models[0] = self.f_class(self.d, **self.f_opts)  # initialize the first event model
+        self.init_for_boundaries(list_events)
 
         for x in my_it(list_events):
             self.update_single_event(x)
