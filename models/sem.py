@@ -454,7 +454,7 @@ class SEM(object):
             self.event_models[k].update_f0(x[0])
             x_prev = x[0]
             for X0 in x[1:]:
-                self.event_models[k].update(X0, x_prev)
+                self.event_models[k].update(x_prev, X0)
                 x_prev = X0
 
             # self.results = Results()
