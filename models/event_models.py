@@ -76,7 +76,9 @@ class EventModel(object):
 
         """
         if not self.f_is_trained:
-            return np.copy(X)
+            if np.ndim(X) > 1:
+                return np.copy(X[-1, :]).reshape(1, -1)
+            return np.copy(X).reshape(1, -1)
 
         return self._predict_next(X)
 
@@ -338,10 +340,14 @@ class KerasLDS(EventModel):
         ])
 
         self.model.compile(**self.compile_opts)
+        self.initial_weights = self.model.get_weights()
 
     def reestimate(self):
         self._init_model()
         self.estimate()
+
+    def reset_weights(self):
+        self.model.set_weights(self.initial_weights)
 
     def append_observation(self, X, Y):
         if np.ndim(X) == 1:
@@ -352,17 +358,19 @@ class KerasLDS(EventModel):
         self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(N, self.d))])
 
     def estimate(self):
+        self.reset_weights()
         self.model.fit(self.x_train, self.y_train, verbose=0, epochs=self.n_epochs, shuffle=True)
 
-    def update(self, X, Y):
+    def update(self, X, Y, update_estimate=True):
         if np.ndim(X) == 1:
             N = 1
         else:
             N, _ = np.shape(X)
         self.x_train = np.concatenate([self.x_train, np.reshape(X, newshape=(N, self.d))])
         self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(N, self.d))])
-        self.estimate()
-        self.f_is_trained = True
+        if update_estimate:
+            self.estimate()
+            self.f_is_trained = True
 
         # cache a prediction error term
         Y_hat = self.predict_next(X)
@@ -391,10 +399,10 @@ class KerasLDS(EventModel):
 
     def predict_next_generative(self, X):
         # the LDS is a markov model, so these functions are the same
-        return self._predict_next(X)
+        return self.predict_next(X)
 
     def _predict_f0(self):
-        return self._predict_next(np.zeros(self.d))
+        return self.predict_next(np.zeros(self.d))
 
     def update_f0(self, Y):
         self.update(np.zeros(self.d), Y)
@@ -430,6 +438,7 @@ class KerasMultiLayerPerceptron(KerasLDS):
                              kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
+        self.initial_weights = self.model.get_weights()
 
 
 class KerasMultiLayerPerceptron_BN(KerasMultiLayerPerceptron):
@@ -445,6 +454,7 @@ class KerasMultiLayerPerceptron_BN(KerasMultiLayerPerceptron):
                              kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
+        self.initial_weights = self.model.get_weights()
 
 
 class KerasSRN(KerasLDS):
@@ -493,6 +503,7 @@ class KerasSRN(KerasLDS):
                                  activation=None, kernel_initializer=self.kernel_initializer,
                                  kernel_regularizer=self.kernel_regularizer))
         self.model.compile(**self.compile_opts)
+        self.initial_weights = self.model.get_weights()
 
     # concatenate current example with the history of the last t-1 examples
     # this is for the recurrent layer
@@ -568,6 +579,7 @@ class KerasSRN(KerasLDS):
 
     # optional: run batch gradient descent on all past event clusters
     def estimate(self):
+        self.reset_weights()
         # run batch gradient descent on all of the past events!
         for _ in range(self.n_epochs):
 
@@ -580,12 +592,16 @@ class KerasSRN(KerasLDS):
                 x_history = self.x_history[clust_id]
                 y_history = self.y_history[clust_id]
 
-                t = np.random.randint(len(x_history))
+                #  picks  random time-point in the history
+                t0 = np.random.randint(len(x_history))
 
+                # the predictors are the unrolled predictors before t0
                 x_batch.append(np.reshape(
-                    unroll_data(x_history[max(t - self.t, 0):t + 1, :], self.t)[-1, :, :], (1, self.t, self.d)
+                    unroll_data(x_history[max(t0 - self.t, 0):t0 + 1, :], self.t)[-1, :, :], (1, self.t, self.d)
                 ))
-                y_batch.append(y_history[t, :])
+
+                # the predicted vector at time t0
+                y_batch.append(y_history[t0, :])
 
             x_batch = np.reshape(x_batch, (self.batch_size, self.t, self.d))
             y_batch = np.reshape(y_batch, (self.batch_size, self.d))
@@ -642,6 +658,7 @@ class KerasRecurrentMLP(KerasSRN):
         self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer,
                   kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
+        self.initial_weights = self.model.get_weights()
 
 
 class KerasRecurrentMLP_BN(KerasRecurrentMLP):
@@ -661,6 +678,7 @@ class KerasRecurrentMLP_BN(KerasRecurrentMLP):
         self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer,
                   kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
+        self.initial_weights = self.model.get_weights()
 
 
 class KerasGRU(KerasSRN):
@@ -697,6 +715,7 @@ class KerasGRU(KerasSRN):
         self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer,
                   kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
+        self.initial_weights = self.model.get_weights()
 
 
 class KerasLSTM(KerasSRN):
@@ -734,3 +753,4 @@ class KerasLSTM(KerasSRN):
         self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
+        self.initial_weights = self.model.get_weights()
