@@ -54,6 +54,9 @@ class EventModel(object):
         # initialize the covariance matrix
         self.Sigma = np.eye(d) * 0.1
 
+        self.x_history = [np.zeros((0, self.d))]
+        self.y_history = [np.zeros((0, self.d))]
+
     def update(self, X, Y):
         """
         Parameters
@@ -133,8 +136,13 @@ class EventModel(object):
     def close(self):
         pass
 
+    # create a new cluster of scenes
     def new_token(self):
-        pass
+        if len(self.x_history) == 1 and self.x_history[0].shape[0] == 0:
+            # special case for the first cluster which is already created
+            return
+        self.x_history.append(np.zeros((0, self.d)))
+        self.y_history.append(np.zeros((0, self.d)))
 
     def predict_next_generative(self, X):
         X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.d))
@@ -302,10 +310,9 @@ class LinearDynamicSystem(EventModel):
 class KerasLDS(EventModel):
 
     def __init__(self, d, var_df0, var_scale0, optimizer=None, n_epochs=100, init_model=True,
-                 kernel_initializer='glorot_uniform', l2_regularization=0.00):
+                 kernel_initializer='glorot_uniform', l2_regularization=0.00, batch_size=32):
         EventModel.__init__(self, d)
-        self.x_train = np.zeros((0, self.d))  # initialize empty arrays
-        self.y_train = np.zeros((0, self.d))
+
 
         if optimizer is None:
             optimizer = Adam(lr=0.01, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
@@ -314,6 +321,7 @@ class KerasLDS(EventModel):
         self.kernel_initializer = kernel_initializer
         self.kernel_regularizer = regularizers.l2(l2_regularization)
         self.n_epochs = n_epochs
+        self.batch_size = batch_size
         self.var_df0 = var_df0
         self.var_scale0 = var_scale0
         self.pe = np.zeros((0, d))
@@ -331,10 +339,8 @@ class KerasLDS(EventModel):
     def _init_model(self):
         self.sess = tf.Session()
 
-        N, D = self.x_train.shape
-
         self.model = Sequential([
-            Dense(D, input_shape=(D,), use_bias=True, kernel_initializer=self.kernel_initializer,
+            Dense(self.d, input_shape=(self.d,), use_bias=True, kernel_initializer=self.kernel_initializer,
                   kernel_regularizer=self.kernel_regularizer),
             Activation('linear')
         ])
@@ -359,25 +365,65 @@ class KerasLDS(EventModel):
 
     def estimate(self):
         self.reset_weights()
-        self.model.fit(self.x_train, self.y_train, verbose=0, epochs=self.n_epochs, shuffle=True)
+
+        def draw_sample_pair():
+            # draw a random cluster for the history
+            clust_id = np.random.randint(len(self.x_history))
+
+            #  picks  random time-point in the history
+            t0 = np.random.randint(len(self.x_history[clust_id]))
+
+            x_sample = np.reshape(self.x_history[clust_id][t0, :], (1, self.d))
+            y_sample = np.reshape(self.y_history[clust_id][t0, :], (1, self.d))
+
+            return x_sample, y_sample
+
+        # run batch gradient descent on all of the past events!
+        for _ in range(self.n_epochs):
+
+            # draw a set of training examples from the history
+            x_batch = []
+            y_batch = []
+            for _ in range(self.batch_size):
+
+                x_sample, y_sample = draw_sample_pair()
+
+                # these data aren't
+                x_batch.append(x_sample)
+                y_batch.append(y_sample)
+
+            x_batch = np.reshape(x_batch, (self.batch_size, self.d))
+            y_batch = np.reshape(y_batch, (self.batch_size, self.d))
+            self.model.train_on_batch(x_batch, y_batch)
+
+        # Update Sigma
+        pe = np.zeros((0, self.d))
+        for x_train_0, y_train_0 in zip(self.x_history, self.y_history):
+            for ii in range(np.shape(x_train_0)[0]):
+                y_hat = self.predict_next(x_train_0[ii, :])
+                pe = np.concatenate([self.pe, y_train_0[ii, :] - y_hat])
+        if np.shape(self.pe)[0] > 1:
+            self.Sigma = np.eye(self.d) * map_variance(pe, self.var_df0, self.var_scale0)
 
     def update(self, X, Y, update_estimate=True):
-        if np.ndim(X) == 1:
-            N = 1
-        else:
-            N, _ = np.shape(X)
-        self.x_train = np.concatenate([self.x_train, np.reshape(X, newshape=(N, self.d))])
-        self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(N, self.d))])
+        if X.ndim > 1:
+            X = X[-1, :]  # only consider last example
+        assert X.ndim == 1
+        assert X.shape[0] == self.d
+        assert Y.ndim == 1
+        assert Y.shape[0] == self.d
+
+        x_example = X.reshape((1, self.d))
+        y_example = Y.reshape((1, self.d))
+
+        # concatenate the training example to the active event token
+
+        self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
+        self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
+
         if update_estimate:
             self.estimate()
             self.f_is_trained = True
-
-        # cache a prediction error term
-        Y_hat = self.predict_next(X)
-
-        self.pe = np.concatenate([self.pe, Y - Y_hat])
-        if np.shape(self.pe)[0] > 1:
-            self.Sigma = np.eye(self.d) * map_variance(self.pe, self.var_df0, self.var_scale0)
 
     def _predict_next(self, X):
         """
@@ -428,13 +474,12 @@ class KerasMultiLayerPerceptron(KerasLDS):
             self._init_model()
 
     def _init_model(self):
-        N, D = self.x_train.shape
         self.model = Sequential()
-        self.model.add(Dense(self.n_hidden, input_shape=(D,), activation=self.hidden_act,
+        self.model.add(Dense(self.n_hidden, input_shape=(self.d,), activation=self.hidden_act,
                              kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
         self.model.add(Dropout(self.dropout))
-        self.model.add(Dense(D, activation='linear',
+        self.model.add(Dense(self.d, activation='linear',
                              kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
@@ -514,37 +559,6 @@ class KerasSRN(KerasLDS):
         x_train = x_train.reshape((1, self.t, self.d))
         return x_train
 
-    # train on a single example
-    #
-    def update(self, X, Y, update_estimate=True):
-        if X.ndim > 1:
-            X = X[-1, :]  # only consider last example
-        assert X.ndim == 1
-        assert X.shape[0] == self.d
-        assert Y.ndim == 1
-        assert Y.shape[0] == self.d
-
-        x_example = X.reshape((1, self.d))
-        y_example = Y.reshape((1, self.d))
-
-        # concatenate the training example to the active event token
-
-        self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
-        self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
-
-        if update_estimate:
-            self.estimate()
-
-        self.f_is_trained = True
-
-        # cache a prediction error term
-        Y_hat = self.predict_next(X)
-
-        # update the variance
-        self.pe = np.concatenate([self.pe, Y - Y_hat])
-        if np.shape(self.pe)[0] > 1:
-            self.Sigma = np.eye(self.d) * map_variance(self.pe, self.var_df0, self.var_scale0)
-
     # predict a single example
     def _predict_next(self, X):
         # Note: this function predicts the next conditioned on the training data the model has seen
@@ -568,14 +582,6 @@ class KerasSRN(KerasLDS):
 
     def _predict_f0(self):
         return self.predict_next_generative(np.zeros(self.d))
-
-    # create a new cluster of scenes
-    def new_token(self):
-        if len(self.x_history) == 1 and self.x_history[0].shape[0] == 0:
-            # special case for the first cluster which is already created
-            return
-        self.x_history.append(np.zeros((0, self.d)))
-        self.y_history.append(np.zeros((0, self.d)))
 
     # optional: run batch gradient descent on all past event clusters
     def estimate(self):
@@ -606,6 +612,15 @@ class KerasSRN(KerasLDS):
             x_batch = np.reshape(x_batch, (self.batch_size, self.t, self.d))
             y_batch = np.reshape(y_batch, (self.batch_size, self.d))
             self.model.train_on_batch(x_batch, y_batch)
+
+        # Update Sigma
+        pe = np.zeros((0, self.d))
+        for x_train_0, y_train_0 in zip(self.x_history, self.y_history):
+            for ii in range(np.shape(x_train_0)[0]):
+                y_hat = self.predict_next_generative(x_train_0[:ii+1, :])
+                pe = np.concatenate([self.pe, y_train_0[ii, :] - y_hat])
+        if np.shape(self.pe)[0] > 1:
+            self.Sigma = np.eye(self.d) * map_variance(pe, self.var_df0, self.var_scale0)
 
     def batch_last_clust(self):
         """
