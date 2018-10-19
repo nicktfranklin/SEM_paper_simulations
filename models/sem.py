@@ -138,16 +138,16 @@ class SEM(object):
                 print '      setting ', attr_name, ' to ', dump[attr_name]
                 setattr(self, attr_name, dump[attr_name])
 
-    def pretrain(self, x, y, progress_bar=True, leave_progress_bar=True):
+    def pretrain(self, x, event_types, event_boundaries, progress_bar=True, leave_progress_bar=True):
         """
         Pretrain a bunch of event models on sequence of scenes X
         with corresponding event labels y, assumed to be between 0 and K-1
         where K = total # of distinct event types
         """
-        assert x.shape[0] == y.size
+        assert x.shape[0] == event_types.size
 
         # update internal state
-        k = np.max(y) + 1
+        k = np.max(event_types) + 1
         self._update_state(x, k)
         del k  # use self.k
 
@@ -162,18 +162,18 @@ class SEM(object):
                 return range(l)
 
         #
-        for n in my_it(n):
+        for ii in my_it(n):
             # print 'pretraining at scene ', n
 
-            x_curr = x[n, :].copy()  # current scene
-            k = y[n]  # current event
+            x_curr = x[ii, :].copy()  # current scene
+            k = event_types[ii]  # current event
 
             if k not in self.event_models.keys():
                 # initialize new event model
                 self.event_models[k] = self.f_class(self.d, **self.f_opts)
 
             # update event model
-            if self.k_prev == k:
+            if not event_boundaries[ii]:
                 # we're in the same event -> update using previous scene
                 assert self.x_prev is not None
                 self.event_models[k].update(self.x_prev, x_curr)
@@ -186,6 +186,9 @@ class SEM(object):
 
             self.x_prev = x_curr  # store the current scene for next trial
             self.k_prev = k  # store the current event for the next trial
+
+        self.x_prev = None  # Clear this for future use
+        self.k_prev = None  #
 
     def _update_state(self, x, k=None):
         """
@@ -208,8 +211,8 @@ class SEM(object):
             self.c = np.concatenate((self.c, np.zeros(self.k - self.c.size)), axis=0)
         assert self.c.size == self.k
 
-    def _calculate_prior_from_counts(self, prev_cluster=None):
-        # internal function for consistencey across "run" methods
+    def _calculate_unnormed_sCRP(self, prev_cluster=None):
+        # internal function for consistency across "run" methods
 
         # calculate sCRP prior
         prior = self.c.copy()
@@ -222,7 +225,7 @@ class SEM(object):
         if prev_cluster is not None:
             prior[prev_cluster] += self.lmda
 
-        prior /= np.sum(prior)
+        # prior /= np.sum(prior)
         return prior
 
     def run(self, x, k=None, progress_bar=True, leave_progress_bar=True):
@@ -256,6 +259,12 @@ class SEM(object):
         post = np.zeros((n, self.k))
         pe = np.zeros(np.shape(x)[0])
         y_hat = np.zeros(np.shape(x))
+        log_boundary_probability = np.zeros(np.shape(x)[0])
+
+        # these are special case variables to deal with the posibility the current event is restarted
+        lik_restart_event = -np.inf
+        repeat_prob = -np.inf
+        restart_prob = 0
 
         # debugging functions
         log_like = np.zeros((n, self.k)) - np.inf
@@ -269,12 +278,12 @@ class SEM(object):
             def my_it(l):
                 return range(l)
 
-        for n in my_it(n):
+        for ii in my_it(n):
 
-            x_curr = x[n, :].copy()
+            x_curr = x[ii, :].copy()
 
             # calculate sCRP prior
-            prior = self._calculate_prior_from_counts(self.k_prev)
+            prior = self._calculate_unnormed_sCRP(self.k_prev)
             # N.B. k_prev should be none for the first event if there wasn't pre-training
 
             # likelihood
@@ -288,35 +297,63 @@ class SEM(object):
                 # get the log likelihood for each event model
                 model = self.event_models[k0]
 
-                # detect event boundaries when there is a change
-                event_boundary0 = (k0 != self.k_prev)  # N.B this allows for experimenter override
+                # detect when there is a change in event types (not the same thing as boundaries)
+                current_event = (k0 == self.k_prev)
 
-                if not event_boundary0:
+                if current_event:
                     assert self.x_prev is not None
                     lik[k0] = model.log_likelihood_next(self.x_prev, x_curr)
+
+                    # special case for the possibility of returning to the start of the current event
+                    lik_restart_event = model.log_likelihood_f0(x_curr)
+
                 else:
                     lik[k0] = model.log_likelihood_f0(x_curr)
 
-            # posterior
-            p = np.log(prior[:len(active)]) + lik - np.max(lik)   # subtracting the max doesn't change proportionality
-            post[n, :len(active)] = np.exp(p - logsumexp(p))
-            # update
+            # determine the event identity (without worrying about event breaks for now)
+            _post = np.log(prior[:len(active)]) + lik
+            if ii > 0:
+                # the probability that the current event is repeated is the OR probability -- but b/c
+                # we are using a MAP approximation over all possibilities, it is a max of the repeated/restarted
 
-            # this is a diagnostic readout and does not effect the model
-            log_like[n, :len(active)] = lik
-            log_prior[n, :len(active)] = np.log(prior[:len(active)])
+                # is restart higher under the current event
+                restart_prob = lik_restart_event + np.log(prior[self.k_prev] - self.lmda)
+                repeat_prob = _post[self.k_prev]
+                _post[self.k_prev] = np.max([repeat_prob, restart_prob])
 
             # get the MAP cluster and only update it
-            k = np.argmax(post[n, :])  # MAP cluster
+            k = np.argmax(_post)  # MAP cluster
 
             # determine whether there was a boundary
-            event_boundary = k != self.k_prev
+            event_boundary = (k != self.k_prev) or ((k == self.k_prev) and (restart_prob > repeat_prob))
+
+            # calculate the event boundary probability
+            _post[self.k_prev] = restart_prob
+            log_boundary_probability[ii] = logsumexp(_post) - logsumexp(np.concatenate([_post, [repeat_prob]]))
+
+            # calculate the probability of an event label, ignoring the event boundaries
+            if self.k_prev is not None:
+                _post[self.k_prev] = logsumexp([restart_prob, repeat_prob])
+                prior[self.k_prev] -= self.lmda / 2.
+                lik[self.k_prev] = logsumexp(np.array([lik[self.k_prev], lik_restart_event]))
+
+                # now, the normalized posterior
+                p = np.log(prior[:len(active)]) + lik - np.max(lik)   # subtracting the max doesn't change proportionality
+                post[ii, :len(active)] = np.exp(p - logsumexp(p))
+
+                # this is a diagnostic readout and does not effect the model
+                log_like[ii, :len(active)] = lik
+                log_prior[ii, :len(active)] = np.log(prior[:len(active)])
+            else:
+                log_like[ii, 0] = 0.0
+                log_prior[ii, 0] = self.alfa
+                post[ii, 0] = 1.0
 
             # prediction error: euclidean distance of the last model and the current scene vector
-            if n > 0:
+            if ii > 0:
                 model = self.event_models[self.k_prev]
-                y_hat[n, :] = model.predict_next(self.x_prev)
-                pe[n] = np.linalg.norm(x_curr - y_hat[n, :])
+                y_hat[ii, :] = model.predict_next(self.x_prev)
+                pe[ii] = np.linalg.norm(x_curr - y_hat[ii, :])
 
             self.c[k] += 1  # update counts
             # update event model
@@ -337,9 +374,13 @@ class SEM(object):
         self.results.pe = pe
         self.results.log_like = log_like
         self.results.log_prior = log_prior
-        self.results.e_hat = np.argmax(post, axis=1)
+        self.results.e_hat = np.argmax(log_like + log_prior, axis=1)
         self.results.y_hat = y_hat
         self.results.log_loss = logsumexp(log_like + log_prior, axis=1)
+        self.results.log_boundary_probability = log_boundary_probability
+        # this is a debugging thing
+        self.results.restart_prob = restart_prob
+        self.results.repeat_prob = repeat_prob
 
         return post
 
@@ -384,7 +425,7 @@ class SEM(object):
             log_prior = np.zeros((1, self.k)) - np.inf
 
         # calculate sCRP prior
-        prior = self._calculate_prior_from_counts(self.k_prev)
+        prior = self._calculate_unnormed_sCRP(self.k_prev)
 
         # likelihood
         active = np.nonzero(prior)[0]
