@@ -87,6 +87,9 @@ class EventModel(object):
 
     def log_likelihood_f0(self, Y):
 
+        if not self.f0_is_trained:
+            return 0.0
+
         # predict the initial point
         Y_hat = self.predict_f0()
 
