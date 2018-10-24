@@ -316,7 +316,6 @@ class KerasLDS(EventModel):
                  kernel_initializer='glorot_uniform', l2_regularization=0.00, batch_size=32):
         EventModel.__init__(self, d)
 
-
         if optimizer is None:
             optimizer = Adam(lr=0.01, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
 
