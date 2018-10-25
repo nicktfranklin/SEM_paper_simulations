@@ -5,6 +5,7 @@ from tqdm import tqdm
 from keras.models import model_from_json
 import copy
 import os
+from keras import backend as K
 
 
 # helper f'n that gets all attributes of an object
@@ -228,7 +229,7 @@ class SEM(object):
         # prior /= np.sum(prior)
         return prior
 
-    def run(self, x, k=None, progress_bar=True, leave_progress_bar=True):
+    def run(self, x, k=None, progress_bar=True, leave_progress_bar=True, minimize_memory=False):
         """
         Parameters
         ----------
@@ -369,6 +370,12 @@ class SEM(object):
             self.x_prev = x_curr  # store the current scene for next trial
             self.k_prev = k  # store the current event for the next trial
 
+        if minimize_memory:
+            self.clear_event_models()
+            self.results = Results()
+            self.results.log_post = log_like + log_prior
+            return
+
         self.results = Results()
         self.results.post = post
         self.results.pe = pe
@@ -378,7 +385,7 @@ class SEM(object):
         self.results.y_hat = y_hat
         self.results.log_loss = logsumexp(log_like + log_prior, axis=1)
         self.results.log_boundary_probability = log_boundary_probability
-        # this is a debugging thing
+        # # this is a debugging thing
         self.results.restart_prob = restart_prob
         self.results.repeat_prob = repeat_prob
 
@@ -557,3 +564,7 @@ class SEM(object):
 
         for x in my_it(list_events):
             self.update_single_event(x)
+
+    def clear_event_models(self):
+        self.event_models = None
+        K.clear_session()
