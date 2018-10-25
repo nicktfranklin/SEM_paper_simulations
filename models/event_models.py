@@ -41,7 +41,7 @@ def map_variance(samples, df0, scale0):
 class EventModel(object):
     """ this is the base clase of the event model """
 
-    def __init__(self, d):
+    def __init__(self, d, prior_log_prob=0.0):
         """
 
         :param d: dimensions of the input space
@@ -56,6 +56,7 @@ class EventModel(object):
 
         self.x_history = [np.zeros((0, self.d))]
         self.y_history = [np.zeros((0, self.d))]
+        self.prior_probability = prior_log_prob
 
     def update(self, X, Y):
         """
@@ -88,7 +89,7 @@ class EventModel(object):
     def log_likelihood_f0(self, Y):
 
         if not self.f0_is_trained:
-            return 0.0
+            return self.prior_probability
 
         # predict the initial point
         Y_hat = self.predict_f0()
@@ -162,9 +163,9 @@ class EventModel(object):
 
 
 class Gaussian(EventModel):
-    def __init__(self, d, var_df0, var_scale0):
+    def __init__(self, d, var_df0, var_scale0, prior_log_prob=0.0):
 
-        EventModel.__init__(self, d)
+        EventModel.__init__(self, d, prior_log_prob=prior_log_prob)
         self.mu = np.zeros(d)
         # initialize Sigma with the mode of the prior distribution
         self.Sigma = np.eye(d) * var_df0 * var_scale0 / (var_df0 + 2)
@@ -192,8 +193,8 @@ class Gaussian(EventModel):
 
 
 class GaussianRandomWalk(EventModel):
-    def __init__(self, d, var_df0, var_scale0):
-        EventModel.__init__(self, d)
+    def __init__(self, d, var_df0, var_scale0, prior_log_prob=0.0):
+        EventModel.__init__(self, d, prior_log_prob=prior_log_prob)
 
         # initialize Sigma with the mode of the prior distribution
         self.Sigma = np.eye(d) * var_df0 * var_scale0 / (var_df0 + 2)
@@ -221,7 +222,7 @@ class GaussianRandomWalk(EventModel):
 
 
 class LinearDynamicSystem(EventModel):
-    def __init__(self, d, var_df0, var_scale0, eta=0.01):
+    def __init__(self, d, var_df0, var_scale0, eta=0.01, prior_log_prob=0.0):
         """
         Parameters
         ----------
@@ -231,7 +232,7 @@ class LinearDynamicSystem(EventModel):
         eta: float
             learning rate
         """
-        EventModel.__init__(self, d)
+        EventModel.__init__(self, d, prior_log_prob=prior_log_prob)
         self.bias = np.zeros(d)
         self.W = np.eye(d)
         self.f0 = np.zeros(d)
@@ -313,8 +314,8 @@ class LinearDynamicSystem(EventModel):
 class KerasLDS(EventModel):
 
     def __init__(self, d, var_df0, var_scale0, optimizer=None, n_epochs=100, init_model=True,
-                 kernel_initializer='glorot_uniform', l2_regularization=0.00, batch_size=32):
-        EventModel.__init__(self, d)
+                 kernel_initializer='glorot_uniform', l2_regularization=0.00, batch_size=32, prior_log_prob=0.0):
+        EventModel.__init__(self, d, prior_log_prob=prior_log_prob)
 
         if optimizer is None:
             optimizer = Adam(lr=0.01, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
@@ -461,10 +462,10 @@ class KerasMultiLayerPerceptron(KerasLDS):
 
     def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh',
                  optimizer=None, n_epochs=100, init_model=True, kernel_initializer='glorot_uniform',
-                 l2_regularization=0.00, dropout=0.50):
+                 l2_regularization=0.00, dropout=0.50, prior_log_prob=0.0):
         KerasLDS.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
                           init_model=False, kernel_initializer=kernel_initializer,
-                          l2_regularization=l2_regularization)
+                          l2_regularization=l2_regularization, prior_log_prob=prior_log_prob)
 
         if n_hidden is None:
             n_hidden = d
@@ -511,7 +512,7 @@ class KerasSRN(KerasLDS):
 
     def __init__(self, d, var_df0, var_scale0, t=3,
                  optimizer=None, n_epochs=100, l2_regularization=0.00, batch_size=32,
-                 kernel_initializer='glorot_uniform', init_model=True):
+                 kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0):
         #
         # D = dimension of single input / output example
         # t = number of time steps to unroll back in time for the recurrent layer
@@ -525,7 +526,7 @@ class KerasSRN(KerasLDS):
 
         KerasLDS.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
                           init_model=False, kernel_initializer=kernel_initializer,
-                          l2_regularization=l2_regularization)
+                          l2_regularization=l2_regularization, prior_log_prob=prior_log_prob)
 
         self.t = t
         self.n_epochs = n_epochs
@@ -645,11 +646,11 @@ class KerasRecurrentMLP(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
                  n_epochs=100, dropout=0.50, l2_regularization=0.00, batch_size=32,
-                 kernel_initializer='glorot_uniform', init_model=True):
+                 kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
                           l2_regularization=l2_regularization, batch_size=batch_size,
-                          kernel_initializer=kernel_initializer, init_model=False)
+                          kernel_initializer=kernel_initializer, init_model=False, prior_log_prob=prior_log_prob)
 
         if n_hidden is None:
             self.n_hidden = d
@@ -702,11 +703,12 @@ class KerasGRU(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
                  n_epochs=100, dropout=0.50, l2_regularization=0.00, batch_size=32,
-                 kernel_initializer='glorot_uniform', init_model=True):
+                 kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
                           l2_regularization=l2_regularization, batch_size=batch_size,
-                          kernel_initializer=kernel_initializer,  init_model=False)
+                          kernel_initializer=kernel_initializer, init_model=False,
+                          prior_log_prob=prior_log_prob)
 
         if n_hidden is None:
             self.n_hidden = d
@@ -739,12 +741,12 @@ class KerasLSTM(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
                  n_epochs=100, dropout=0.50, l2_regularization=0.00,
-                 batch_size=32,
-                 kernel_initializer='glorot_uniform', init_model=True):
+                 batch_size=32, kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
                           l2_regularization=l2_regularization, batch_size=batch_size,
-                          kernel_initializer=kernel_initializer, init_model=False)
+                          kernel_initializer=kernel_initializer, init_model=False,
+                          prior_log_prob=prior_log_prob)
 
         if n_hidden is None:
             self.n_hidden = d
