@@ -4,11 +4,17 @@ from models.sem import SEM
 from models.event_models import *
 from scipy.special import logsumexp
 from tqdm import tqdm
-import sys
+import sys, os, gc
+from scipy.stats import multivariate_normal
 
 
+# helper functions
 def z_score(x):
     return (x - np.mean(x)) / np.std(x)
+
+
+def get_r2(x, y):
+    return np.corrcoef(z_score(x), z_score(y))[0][1] ** 2
 
 
 def convert_type_token(event_types):
@@ -19,6 +25,8 @@ def convert_type_token(event_types):
         else:
             tokens.append(tokens[-1] + 1)
     return tokens
+
+
 def get_event_duration(event_types, frequency=30):
     tokens = convert_type_token(event_types)
     n_tokens = np.max(tokens)+1
@@ -28,7 +36,34 @@ def get_event_duration(event_types, frequency=30):
     return np.array(lens, dtype=float) / frequency
 
 
-def segment_compare(event_sequence, comparison_data, f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1):
+def load_comparison_data(data, bin_size=1.0):
+
+    def bin_times(array, max_seconds, bin_size=bin_size):
+        cumulative_binned = [np.sum(array <= t0 * 1000) for t0 in np.arange(bin_size, max_seconds + bin_size, bin_size)]
+        binned = np.array(cumulative_binned)[1:] - np.array(cumulative_binned)[:-1]
+        binned = np.concatenate([[cumulative_binned[0]], binned])
+        return binned
+
+    # Movie A is Saxaphone (185s long)
+    # Movie B is making a bed (336s long)
+    # Movie C is doing dishes (255s long)
+
+    # here, we'll collapse over all of the groups (old, young; warned, unwarned) for now
+    n_subjs = len(set(data.SubjNum))
+
+    sax_times = np.sort(list(set(data.loc[data.Movie == 'A', 'MS']))).astype(np.float32)
+    binned_sax = bin_times(sax_times, 185, 1.0) / np.float(n_subjs)
+
+    bed_times = np.sort(list(set(data.loc[data.Movie == 'B', 'MS']))).astype(np.float32)
+    binned_bed = bin_times(bed_times, 336, 1.0) / np.float(n_subjs)
+
+    dishes_times = np.sort(list(set(data.loc[data.Movie == 'C', 'MS']))).astype(np.float32)
+    binned_dishes = bin_times(dishes_times, 255, 1.0) / np.float(n_subjs)
+
+    return binned_sax, binned_bed, binned_dishes
+
+
+def segment_video(event_sequence, f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1):
     """
     :param event_sequence: (NxD np.array) the sequence of N event vectors in D dimensions
     :param f_class: (EventModel) the event model class
@@ -46,16 +81,18 @@ def segment_compare(event_sequence, comparison_data, f_class, f_opts, lmda=10 **
     }
 
     sem_model = SEM(**Omega)
-    sem_model.run(event_sequence, k=event_sequence.shape[0], leave_progress_bar=True)
+    sem_model.run(event_sequence, k=event_sequence.shape[0], leave_progress_bar=True, minimize_memory=True)
+    return sem_model.results.log_post
 
-    # compare the model segmentation to human data via regression and store the output
 
-    prediction_error = z_score(-sem_model.results.log_loss)
+def get_binned_boundary_prop(e_hat, log_post, bin_size=1.0, frequency=30.0):
+    """
+    :param results: SEM.Results
+    :param bin_size: seconds
+    :param frequency: in Hz
+    :return:
+    """
 
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
-    # calculate the boundary probability
-    e_hat = sem_model.results.e_hat.copy()
-    log_post = sem_model.results.log_prior.copy() + sem_model.results.log_like.copy()
     # normalize
     log_post0 = log_post - np.tile(np.max(log_post, axis=1).reshape(-1, 1), (1, log_post.shape[1]))
     log_post0 -= np.tile(logsumexp(log_post0, axis=1).reshape(-1, 1), (1, log_post.shape[1]))
@@ -66,215 +103,206 @@ def segment_compare(event_sequence, comparison_data, f_class, f_opts, lmda=10 **
         idx.remove(e_hat[ii - 1])
         boundary_probability.append(logsumexp(log_post0[ii, idx]))
     boundary_probability = np.array(boundary_probability)
-    # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ #
 
-    # bin the prediction error!
-    def prep_compare_pe(bin_size):
+    frame_time = np.arange(1, len(boundary_probability) + 1) / float(frequency)
 
-        frame_time = np.arange(1, len(prediction_error) + 1) / 30.0
-
-        index = np.arange(0, np.max(frame_time), bin_size)
-        prediction_error_binned = []
-        for t in index:
-            prediction_error_binned.append(prediction_error[(frame_time >= t) & (frame_time < (t + bin_size))].sum())
-        prediction_error_binned = pd.Series(prediction_error_binned, index=index)
-
-        yw_binned = []
-        for t in index:
-            l = comparison_data[(comparison_data.index > t) &
-                                 (comparison_data.index < (t + bin_size))]
-            if l.empty:
-                yw_binned.append(0)
-            else:
-                yw_binned.append(l.max().values[0])
-
-        yw_binned = pd.Series(np.array(yw_binned), index=index)
-        X = prediction_error_binned.values
-        y = yw_binned.values
-        return X, y
-
-    # bin the boundary probability!
-    def prep_compare_boundprob(bin_size):
-
-        frame_time = np.arange(1, len(boundary_probability) + 1) / (30.0 )
-
-        index = np.arange(0, np.max(frame_time), bin_size)
-        boundary_probability_binned = []
-        for t in index:
-            boundary_probability_binned.append(
-                # note: this operation is equivalent to the log of the average boundary probability in the window
-                logsumexp(boundary_probability[(frame_time >= t) & (frame_time < (t + bin_size))]) - \
-                np.log(bin_size * 30.)
-            )
-        boundary_probability_binned = pd.Series(boundary_probability_binned, index=index)
-
-        # bin the subject data
-        yw_binned = []
-        for t in index:
-            l = comparison_data[(comparison_data.index > t) &
-                                 (comparison_data.index < (t + bin_size))]
-            if l.empty:
-                yw_binned.append(0)
-            else:
-                yw_binned.append(l.max().values[0])
-
-        yw_binned = pd.Series(np.array(yw_binned), index=index)
-        X = boundary_probability_binned.values
-        y = yw_binned.values
-        return X, y
-
-    def get_r2(x, y):
-        x = (x - np.mean(x)) / np.std(x)
-        y = (y - np.mean(y)) / np.std(y)
-        return np.corrcoef(x, y)[0][1] ** 2
-
-    # loop through and correlate the model prediction error
-    r2s_pe = []
-    bins = np.arange(0.20, 8.1, 0.2)
-    n_permute = 500
-    r2s_pe_rand = np.zeros((n_permute, len(bins)))
-
-    for ii, b in tqdm(enumerate(bins), desc='Prediction Error') :
-        x, y = prep_compare_pe(b)
-        r2s_pe.append(get_r2(x, y))
-        for jj in range(n_permute):
-            np.random.shuffle(x)
-            r2s_pe_rand[jj, ii] = get_r2(x, y)
-
-    # loop through and correlate the model boundary probability
-
-    r2s_bp = []
-    r2s_bp_rand = np.zeros((n_permute, len(bins)))
-
-    for ii, b in tqdm(enumerate(bins), desc='Boundary Probability'):
-        x, y = prep_compare_boundprob(b)
-        r2s_bp.append(get_r2(x, y))
-        for jj in range(n_permute):
-            np.random.shuffle(x)
-            r2s_bp_rand[jj, ii] = get_r2(x, y)
-
-    return pd.DataFrame({
-        'Bin Size': bins,
-        'PE Model r2': np.array(r2s_pe),
-        'PE Permutation Mean': r2s_pe_rand.mean(axis=0),
-        'PE Permutation Std': r2s_pe_rand.std(axis=0),
-        'PE Permutation p-value': np.mean(r2s_pe_rand - (np.tile(np.array(r2s_pe), (n_permute, 1))) > 0, axis=0),
-        'BP Model r2': np.array(r2s_bp),
-        'BP Permutation Mean': r2s_bp_rand.mean(axis=0),
-        'BP Permutation Std': r2s_bp_rand.std(axis=0),
-        'BP Permutation p-value': np.mean(r2s_bp_rand - (np.tile(np.array(r2s_bp), (n_permute, 1))) > 0, axis=0),
-        'Event Length (avg)': np.mean(get_event_duration(e_hat)),
-        'Event Length (std)': np.std(get_event_duration(e_hat)),
-        'LogLoss': np.sum(sem_model.results.log_loss)
-    })
+    index = np.arange(0, np.max(frame_time), bin_size)
+    boundary_probability_binned = []
+    for t in index:
+        boundary_probability_binned.append(
+            # note: this operation is equivalent to the log of the average boundary probability in the window
+            logsumexp(boundary_probability[(frame_time >= t) & (frame_time < (t + bin_size))]) - \
+            np.log(bin_size * 30.)
+        )
+    boundary_probability_binned = pd.Series(boundary_probability_binned, index=index)
+    return boundary_probability_binned
 
 
-def main(df0=10, scale0=0.3, l2_regularization=0.3, dropout=0.1, t=10, data_path=None,
-         optimizer=None, output_id_tag=None, n_epochs=100):
+def make_log_prob_prior(Z, df0, scale0):
+    mode = df0 * scale0 / (df0 + 2)
+    return multivariate_normal.logpdf(np.mean(Z, axis=0), mean=np.zeros(Z.shape[1]), cov=np.eye(Z.shape[1]) * mode)
 
-    if data_path is None:
-        data_path = './'
+
+def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_permute=100,
+                 human_data_path=None, video_data_path=None,
+                 ):
+
+    if video_data_path is None:
+        video_data_path = './'
+
+    if human_data_path is None:
+        human_data_path = './'
 
     # load the raw data
-    Z = np.load('./video_color_Z_embedded_64.npy')
+    embedded_videos = np.load(video_data_path + 'video_color_Z_embedded_64.npy')
 
-    # the "Sax" movie is from time slices 0 to 5537
-    event_sequence = Z[range(0, 5537), :]
-    # sax = Z[range(0, 500), :]
+    # the "Sax" movie is from time slices 0 to 5537, etc.
+    sax = embedded_videos[0:5537, :]
+    bed = embedded_videos[5537:5537 + 10071, :]
+    dishes = embedded_videos[5537 + 10071: 5537 + 10071 + 7633, :]
 
-    comparison_data = pd.read_csv('./zachs_2006_young_unwarned.csv', header=-1)
-    comparison_data.set_index(0, inplace=True)
+    # adjust the prior of a new cluster!
+    f_opts['prior_log_prob'] = make_log_prob_prior(embedded_videos, df0=f_opts['var_df0'], scale0=f_opts['var_scale0'])
+    embedded_videos = None  # Clear memory ?
+
+    # load the comparison data
+    # experiment 1:
+    data = pd.read_csv(human_data_path + 'data021011.dat', delimiter='\t')
+    binned_sax, binned_bed, binned_dishes = load_comparison_data(data)
+
+    # for memory management, put these into a method
+    def get_summary_stats(data):
+        log_post = segment_video(data, f_class, f_opts, lmda, alfa)
+
+        e_hat = np.argmax(log_post, axis=1)
+        binned_prob = get_binned_boundary_prop(e_hat, log_post, bin_size=bin_size)
+        avg_duration = np.mean(get_event_duration(e_hat))
+        log_loss = np.sum(logsumexp(log_post, axis=1))
+
+        return binned_prob, log_loss, avg_duration
+
+    # evaluate the model
+    binned_sax_prob, sax_loss, sax_duration = get_summary_stats(sax)
+    sax = None
+
+    binned_bed_prob, bed_loss, bed_duration = get_summary_stats(bed)
+    bed = None
+
+    binned_dishes_prob, dishes_loss, dishes_duration = get_summary_stats(dishes)
+    dishes = None
+
+    # concatenate all of the data to caluclate the r2 values
+    binned_comp_data = np.concatenate([binned_sax, binned_bed, binned_dishes])
+    binned_model_prob = np.concatenate([binned_sax_prob, binned_bed_prob, binned_dishes_prob])
+    r2 = get_r2(binned_comp_data, binned_model_prob)
+
+    # run permutation test
+    r2_permuted = [None] * n_permute
+    for jj in range(n_permute):
+
+        # permute each of the three videos' model probability
+        np.random.shuffle(binned_sax_prob)
+        np.random.shuffle(binned_bed_prob)
+        np.random.shuffle(binned_dishes_prob)
+        binned_model_prob = np.concatenate([binned_sax_prob, binned_bed_prob, binned_dishes_prob])
+        r2_permuted[jj] = get_r2(binned_comp_data, binned_model_prob)
+
+    return pd.DataFrame({
+        'Bin Size': bin_size,
+        'Event Length (Sax)': sax_duration,
+        'Event Length (Bed)': bed_duration,
+        'Event Length (Dishes)': dishes_duration,
+        'Model r2': r2,
+        'Permutation Mean': np.mean(r2_permuted),
+        'Permutation Std': np.std(r2_permuted),
+        'Permutation p-value': np.mean((r2 - np.array(r2_permuted) > 0)),
+        'LogLoss': sax_loss + bed_loss + dishes_loss,
+    }, index=[0])
+
+
+def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_path=None,
+         optimizer=None, output_id_tag=None, n_epochs=100, lmda=10**5, alfa=10 ** -1,
+         bin_size=1.0, n_permute=100, comp_data_path=None, video_data_path=None, ):
 
     output_tag = '_df0_{}_scale0_{}_l2_{}_do_{}'.format(df0, scale0, l2_regularization, dropout)
     if output_id_tag is not None:
         output_tag += output_id_tag
 
+
     ####### DP-GMM Events #########
     f_class = Gaussian
     f_opts = dict(var_df0=df0, var_scale0=scale0)
-    lmbd_gmm = 0  # we want no stickiness as a control!
-    args = [event_sequence, comparison_data, f_class, f_opts, lmbd_gmm]
-
+    # we want no stickiness as a control!
+    kwargs = dict(lmda=0.0, alfa=alfa, bin_size=bin_size, n_permute=n_permute,
+                  human_data_path=comp_data_path, video_data_path=video_data_path)
     sys.stdout.write('Running DP-GMM\n')
-    res = segment_compare(*args)
+    res = seg_comp_new(f_class, f_opts, **kwargs)
     res['EventModel'] = ['DP-GMM'] * len(res)
-    res.to_pickle(data_path + 'EventR2_DPGMM' + output_tag + '.pkl')
+    res.to_pickle(output_path + 'EventR2_DPGMM' + output_tag + '.pkl')
+    sys.stdout.write('\n')
 
     ####### Gaussian Random Walk #########
     f_class = GaussianRandomWalk
     f_opts = dict(var_df0=df0, var_scale0=scale0)
-    args = [event_sequence, comparison_data, f_class, f_opts]
-
+    kwargs['lmda'] = lmda  # change this back for other models
     sys.stdout.write('Running Random Walk\n')
-    res = segment_compare(*args)
+    res = seg_comp_new(f_class, f_opts, **kwargs)
     res['EventModel'] = ['RandomWalk'] * len(res)
-    res.to_pickle(data_path + 'EventR2_RandWalk' + output_tag + '.pkl')
+    res.to_pickle(output_path + 'EventR2_RandWalk' + output_tag + '.pkl')
+    sys.stdout.write('\n')
 
-    ####### LDS Events #########
+    # ####### LDS Events #########
     f_class = KerasLDS
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                optimizer=optimizer, n_epochs=n_epochs,
-                )
-    args = [event_sequence, comparison_data, f_class, f_opts]
-
+                  optimizer=optimizer, n_epochs=n_epochs)
     sys.stdout.write('Running LDS\n')
-    res = segment_compare(*args)
+    res = seg_comp_new(f_class, f_opts, **kwargs)
     res['EventModel'] = ['LDS'] * len(res)
-    res.to_pickle(data_path + 'EventR2_LDS' + output_tag + '.pkl')
+    res.to_pickle(output_path + 'EventR2_LDS' + output_tag + '.pkl')
+    sys.stdout.write('\n')
 
     ####### MLP Events #########
     f_class = KerasMultiLayerPerceptron
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
                   dropout=dropout, optimizer=optimizer,  n_epochs=n_epochs)
-    args = [event_sequence, comparison_data, f_class, f_opts]
 
-    res = []
     sys.stdout.write('Running MLP\n')
-    res = segment_compare(*args)
+    res = seg_comp_new(f_class, f_opts, **kwargs)
     res['EventModel'] = ['MLP'] * len(res)
-    res.to_pickle(data_path + 'EventR2_MLP' + output_tag + '.pkl')
+    res.to_pickle(output_path + 'EventR2_MLP' + output_tag + '.pkl')
+    sys.stdout.write('\n')
 
-    ####### SRN Events #########
+    # ####### SRN Events #########
     f_class = KerasRecurrentMLP
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
                   dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs)
-    args = [event_sequence, comparison_data, f_class, f_opts]
 
     sys.stdout.write('Running RNN\n')
-    res = segment_compare(*args)
+    res = seg_comp_new(f_class, f_opts, **kwargs)
     res['EventModel'] = ['RNN'] * len(res)
-    res.to_pickle(data_path + 'EventR2_RNN' + output_tag + '.pkl')
+    res.to_pickle(output_path + 'EventR2_RNN' + output_tag + '.pkl')
+    sys.stdout.write('\n')
 
-    ####### GRU #########
+    # ####### GRU #########
     f_class = KerasGRU
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
                   dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs)
-    args = [event_sequence, comparison_data, f_class, f_opts]
 
     sys.stdout.write('Running GRU\n')
-    res = segment_compare(*args)
+    res = seg_comp_new(f_class, f_opts, **kwargs)
     res['EventModel'] = ['GRU'] * len(res)
-    res.to_pickle(data_path + 'EventR2_GRU' + output_tag + '.pkl')
+    res.to_pickle(output_path + 'EventR2_GRU' + output_tag + '.pkl')
+    sys.stdout.write('\n')
 
-    ####### LSTM #########
+    # ####### LSTM #########
     f_class = KerasLSTM
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
                   dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs)
-    args = [event_sequence, comparison_data, f_class, f_opts]
 
     sys.stdout.write('Running LSTM\n')
-    res = segment_compare(*args)
+    res = seg_comp_new(f_class, f_opts, **kwargs)
     res['EventModel'] = ['LSTM'] * len(res)
-    res.to_pickle(data_path + 'EventR2_LSTM' + output_tag + '.pkl')
+    res.to_pickle(output_path + 'EventR2_LSTM' + output_tag + '.pkl')
+    sys.stdout.write('\n')
+
 
     sys.stdout.write('Done!\n')
 
 
 if __name__ == "__main__":
-    data_path = 'data/video_results/'
 
-    main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=10, data_path=data_path,
-    optimizer='sgd', output_id_tag="sgd")
+    output_path = './'
+    # video_data_path = './data/videodata/'
+    # comp_data_file = './data/Zacks2006/'
+    video_data_path = './'
+    comp_data_file = './'
 
-    main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=10, data_path=data_path,
-         output_id_tag="adam")
+    lmda = 10 ** 5
+    alfa = 10 ** -5
+
+    main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, n_epochs=50,
+         lmda=lmda, alfa=alfa,
+         optimizer=None, output_id_tag="adam",
+         output_path=output_path,comp_data_path=comp_data_file, video_data_path=video_data_path)
+
+    # time_test(df0=10, scale0=0.9, l2_regularization=0.0, dropout=0.5, t=10, data_path=data_path)

@@ -244,6 +244,10 @@ class SEM(object):
         leave_progress_bar: bool
             leave the progress bar after completing?
 
+        minimize_memory: bool
+            function to minimize memory storage during running --> only returns the log_probability of each
+            cluster and nothing else
+
         Return
         ------
         post: n by k array of posterior probabilities
@@ -257,17 +261,18 @@ class SEM(object):
         n = x.shape[0]
 
         # initialize arrays
-        post = np.zeros((n, self.k))
-        pe = np.zeros(np.shape(x)[0])
-        y_hat = np.zeros(np.shape(x))
-        log_boundary_probability = np.zeros(np.shape(x)[0])
+        if not minimize_memory:
+            post = np.zeros((n, self.k))
+            pe = np.zeros(np.shape(x)[0])
+            y_hat = np.zeros(np.shape(x))
+            log_boundary_probability = np.zeros(np.shape(x)[0])
 
-        # these are special case variables to deal with the posibility the current event is restarted
+        # these are special case variables to deal with the possibility the current event is restarted
         lik_restart_event = -np.inf
         repeat_prob = -np.inf
         restart_prob = 0
 
-        # debugging functions
+        #
         log_like = np.zeros((n, self.k)) - np.inf
         log_prior = np.zeros((n, self.k)) - np.inf
 
@@ -330,7 +335,8 @@ class SEM(object):
 
             # calculate the event boundary probability
             _post[self.k_prev] = restart_prob
-            log_boundary_probability[ii] = logsumexp(_post) - logsumexp(np.concatenate([_post, [repeat_prob]]))
+            if not minimize_memory:
+                log_boundary_probability[ii] = logsumexp(_post) - logsumexp(np.concatenate([_post, [repeat_prob]]))
 
             # calculate the probability of an event label, ignoring the event boundaries
             if self.k_prev is not None:
@@ -339,22 +345,31 @@ class SEM(object):
                 lik[self.k_prev] = logsumexp(np.array([lik[self.k_prev], lik_restart_event]))
 
                 # now, the normalized posterior
-                p = np.log(prior[:len(active)]) + lik - np.max(lik)   # subtracting the max doesn't change proportionality
-                post[ii, :len(active)] = np.exp(p - logsumexp(p))
+                if not minimize_memory:
+                    p = np.log(prior[:len(active)]) + lik - np.max(lik)  # subtracting the max doesn't change proportionality
+                    post[ii, :len(active)] = np.exp(p - logsumexp(p))
 
                 # this is a diagnostic readout and does not effect the model
                 log_like[ii, :len(active)] = lik
                 log_prior[ii, :len(active)] = np.log(prior[:len(active)])
+
+                # These aren't used again, remove from memory
+                _post = None
+                lik = None
+                prior = None
+
             else:
                 log_like[ii, 0] = 0.0
                 log_prior[ii, 0] = self.alfa
-                post[ii, 0] = 1.0
+                if not minimize_memory:
+                    post[ii, 0] = 1.0
 
-            # prediction error: euclidean distance of the last model and the current scene vector
-            if ii > 0:
-                model = self.event_models[self.k_prev]
-                y_hat[ii, :] = model.predict_next(self.x_prev)
-                pe[ii] = np.linalg.norm(x_curr - y_hat[ii, :])
+            if not minimize_memory:
+                # prediction error: euclidean distance of the last model and the current scene vector
+                if ii > 0:
+                    model = self.event_models[self.k_prev]
+                    y_hat[ii, :] = model.predict_next(self.x_prev)
+                    pe[ii] = np.linalg.norm(x_curr - y_hat[ii, :])
 
             self.c[k] += 1  # update counts
             # update event model
