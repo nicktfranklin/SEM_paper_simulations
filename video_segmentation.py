@@ -134,16 +134,10 @@ def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_p
         human_data_path = './'
 
     # load the raw data
-    embedded_videos = np.load(video_data_path + 'video_color_Z_embedded_64.npy')
-
-    # the "Sax" movie is from time slices 0 to 5537, etc.
-    sax = embedded_videos[0:5537, :]
-    bed = embedded_videos[5537:5537 + 10071, :]
-    dishes = embedded_videos[5537 + 10071: 5537 + 10071 + 7633, :]
+    sax = np.load(video_data_path + 'video_color_Z_embedded_64.npy')[0:5537, :]
 
     # adjust the prior of a new cluster!
-    f_opts['prior_log_prob'] = make_log_prob_prior(embedded_videos, df0=f_opts['var_df0'], scale0=f_opts['var_scale0'])
-    embedded_videos = None  # Clear memory ?
+    f_opts['prior_log_prob'] = make_log_prob_prior(sax, df0=f_opts['var_df0'], scale0=f_opts['var_scale0'])
 
     # load the comparison data
     # experiment 1:
@@ -165,9 +159,11 @@ def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_p
     binned_sax_prob, sax_loss, sax_duration = get_summary_stats(sax)
     sax = None
 
+    bed = np.load(video_data_path + 'video_color_Z_embedded_64.npy')[5537:5537 + 10071, :]
     binned_bed_prob, bed_loss, bed_duration = get_summary_stats(bed)
     bed = None
 
+    dishes = np.load(video_data_path + 'video_color_Z_embedded_64.npy')[5537 + 10071: 5537 + 10071 + 7633, :]
     binned_dishes_prob, dishes_loss, dishes_duration = get_summary_stats(dishes)
     dishes = None
 
@@ -202,7 +198,8 @@ def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_p
 
 def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_path=None,
          optimizer=None, output_id_tag=None, n_epochs=100, lmda=10**5, alfa=10 ** -1,
-         bin_size=1.0, n_permute=100, comp_data_path=None, video_data_path=None, ):
+         bin_size=1.0, n_permute=100, comp_data_path=None, video_data_path=None,
+         reset_weights=True):
 
     output_tag = '_df0_{}_scale0_{}_l2_{}_do_{}'.format(df0, scale0, l2_regularization, dropout)
     if output_id_tag is not None:
@@ -234,7 +231,7 @@ def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_pat
     # ####### LDS Events #########
     f_class = KerasLDS
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                  optimizer=optimizer, n_epochs=n_epochs)
+                  optimizer=optimizer, n_epochs=n_epochs, reset_weights=reset_weights)
     sys.stdout.write('Running LDS\n')
     res = seg_comp_new(f_class, f_opts, **kwargs)
     res['EventModel'] = ['LDS'] * len(res)
@@ -244,7 +241,7 @@ def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_pat
     ####### MLP Events #########
     f_class = KerasMultiLayerPerceptron
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                  dropout=dropout, optimizer=optimizer,  n_epochs=n_epochs)
+                  dropout=dropout, optimizer=optimizer,  n_epochs=n_epochs, reset_weights=reset_weights)
 
     sys.stdout.write('Running MLP\n')
     res = seg_comp_new(f_class, f_opts, **kwargs)
@@ -255,7 +252,7 @@ def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_pat
     # ####### SRN Events #########
     f_class = KerasRecurrentMLP
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                  dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs)
+                  dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs, reset_weights=reset_weights)
 
     sys.stdout.write('Running RNN\n')
     res = seg_comp_new(f_class, f_opts, **kwargs)
@@ -266,7 +263,7 @@ def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_pat
     # ####### GRU #########
     f_class = KerasGRU
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                  dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs)
+                  dropout=dropout, t=t, optimizer=optimizer, n_epochs=n_epochs, reset_weights=reset_weights)
 
     sys.stdout.write('Running GRU\n')
     res = seg_comp_new(f_class, f_opts, **kwargs)
@@ -277,7 +274,7 @@ def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_pat
     # ####### LSTM #########
     f_class = KerasLSTM
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
-                  dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs)
+                  dropout=dropout, t=t, optimizer=optimizer,  n_epochs=n_epochs, reset_weights=reset_weights)
 
     sys.stdout.write('Running LSTM\n')
     res = seg_comp_new(f_class, f_opts, **kwargs)
@@ -285,24 +282,23 @@ def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_pat
     res.to_pickle(output_path + 'EventR2_LSTM' + output_tag + '.pkl')
     sys.stdout.write('\n')
 
-
     sys.stdout.write('Done!\n')
 
 
 if __name__ == "__main__":
 
     output_path = './'
-    # video_data_path = './data/videodata/'
-    # comp_data_file = './data/Zacks2006/'
-    video_data_path = './'
-    comp_data_file = './'
+    video_data_path = './data/videodata/'
+    comp_data_file = './data/Zacks2006/'
+    # video_data_path = './'
+    # comp_data_file = './'
 
     lmda = 10 ** 5
     alfa = 10 ** -5
 
     main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, n_epochs=50,
          lmda=lmda, alfa=alfa,
-         optimizer=None, output_id_tag="adam",
-         output_path=output_path,comp_data_path=comp_data_file, video_data_path=video_data_path)
+         optimizer=None, output_id_tag="adam", reset_weights=True,
+         output_path=output_path, comp_data_path=comp_data_file, video_data_path=video_data_path)
 
     # time_test(df0=10, scale0=0.9, l2_regularization=0.0, dropout=0.5, t=10, data_path=data_path)
