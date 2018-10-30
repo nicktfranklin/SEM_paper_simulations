@@ -118,6 +118,36 @@ def get_binned_boundary_prop(e_hat, log_post, bin_size=1.0, frequency=30.0):
     return boundary_probability_binned
 
 
+def get_binned_boundaries(e_hat, bin_size=1.0, frequency=30.0):
+    frame_time = np.arange(1, len(e_hat) + 1) / float(frequency)
+    index = np.arange(0, np.max(frame_time), bin_size)
+
+    boundaries = np.concatenate([[0], e_hat[1:] !=e_hat[:-1]])
+
+    boundaries_binned = []
+    for t in index:
+        boundaries_binned.append(np.sum(
+            boundaries[(frame_time >= t) & (frame_time < (t + bin_size))]
+        ))
+    return np.array(boundaries_binned)
+
+
+def get_point_biserial(boundaries_binned, binned_comp):
+    print np.shape(boundaries_binned), np.shape(binned_comp)
+    M_1 = np.mean(binned_comp[boundaries_binned == 1])
+    M_0 = np.mean(binned_comp[boundaries_binned == 0])
+
+    n_1 = np.sum(boundaries_binned == 1)
+    n_0 = np.sum(boundaries_binned == 0)
+    n = n_1 + n_0
+
+    s = np.std(binned_comp)
+    print M_1, M_0, n_1, n_0, n, s
+
+    r_pb = (M_1 - M_0) / s * np.sqrt(n_1 * n_0 / (n**2))
+    return r_pb
+
+
 def make_log_prob_prior(Z, df0, scale0):
     mode = df0 * scale0 / (df0 + 2)
     return multivariate_normal.logpdf(np.mean(Z, axis=0), mean=np.zeros(Z.shape[1]), cov=np.eye(Z.shape[1]) * mode)
@@ -152,25 +182,32 @@ def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_p
         binned_prob = get_binned_boundary_prop(e_hat, log_post, bin_size=bin_size)
         avg_duration = np.mean(get_event_duration(e_hat))
         log_loss = np.sum(logsumexp(log_post, axis=1))
+        binned_boundaries = get_binned_boundaries(e_hat, bin_size=bin_size)
 
-        return binned_prob, log_loss, avg_duration
+        return binned_prob, log_loss, avg_duration, binned_boundaries
 
     # evaluate the model
-    binned_sax_prob, sax_loss, sax_duration = get_summary_stats(sax)
+    binned_sax_prob, sax_loss, sax_duration, binned_sax_bounds = get_summary_stats(sax)
     sax = None
+    # print "r_pb: {}".format(get_point_biserial(binned_sax_bounds, binned_sax))
 
     bed = np.load(video_data_path + 'video_color_Z_embedded_64.npy')[5537:5537 + 10071, :]
-    binned_bed_prob, bed_loss, bed_duration = get_summary_stats(bed)
+    binned_bed_prob, bed_loss, bed_duration, binned_bed_bounds = get_summary_stats(bed)
     bed = None
 
     dishes = np.load(video_data_path + 'video_color_Z_embedded_64.npy')[5537 + 10071: 5537 + 10071 + 7633, :]
-    binned_dishes_prob, dishes_loss, dishes_duration = get_summary_stats(dishes)
+    binned_dishes_prob, dishes_loss, dishes_duration, binned_dishes_bounds = get_summary_stats(dishes)
     dishes = None
 
     # concatenate all of the data to caluclate the r2 values
     binned_comp_data = np.concatenate([binned_sax, binned_bed, binned_dishes])
     binned_model_prob = np.concatenate([binned_sax_prob, binned_bed_prob, binned_dishes_prob])
     r2 = get_r2(binned_comp_data, binned_model_prob)
+
+    # calculate the point-biserial correlation
+    binned_bounds = np.concatenate([binned_sax_bounds, binned_bed_bounds, binned_dishes_bounds])
+    binned_comp_bounds = np.concatenate([binned_sax, binned_bed, binned_dishes])
+    r_bp = get_point_biserial(binned_bounds, binned_comp_bounds)
 
     # run permutation test
     r2_permuted = [None] * n_permute
@@ -192,6 +229,7 @@ def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_p
         'Permutation Mean': np.mean(r2_permuted),
         'Permutation Std': np.std(r2_permuted),
         'Permutation p-value': np.mean((r2 - np.array(r2_permuted) > 0)),
+        'Point-biserial correlation coeff': r_bp,
         'LogLoss': sax_loss + bed_loss + dishes_loss,
     }, index=[0])
 
@@ -209,16 +247,16 @@ def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_pat
     ####### DP-GMM Events #########
     f_class = Gaussian
     f_opts = dict(var_df0=df0, var_scale0=scale0)
-    # we want no stickiness as a control!
+    # # we want no stickiness as a control!
     kwargs = dict(lmda=0.0, alfa=alfa, bin_size=bin_size, n_permute=n_permute,
                   human_data_path=comp_data_path, video_data_path=video_data_path)
-    sys.stdout.write('Running DP-GMM\n')
+    # sys.stdout.write('Running DP-GMM\n')
     res = seg_comp_new(f_class, f_opts, **kwargs)
     res['EventModel'] = ['DP-GMM'] * len(res)
     res.to_pickle(output_path + 'EventR2_DPGMM' + output_tag + '.pkl')
     sys.stdout.write('\n')
 
-    ####### Gaussian Random Walk #########
+    # ####### Gaussian Random Walk #########
     f_class = GaussianRandomWalk
     f_opts = dict(var_df0=df0, var_scale0=scale0)
     kwargs['lmda'] = lmda  # change this back for other models
@@ -285,6 +323,31 @@ def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_pat
     sys.stdout.write('Done!\n')
 
 
+def gru_only(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_path=None,
+         optimizer=None, output_id_tag=None, n_epochs=100, lmda=10**5, alfa=10 ** -1,
+         bin_size=1.0, n_permute=100, comp_data_path=None, video_data_path=None,
+         reset_weights=True):
+
+    output_tag = '_df0_{}_scale0_{}_l2_{}_do_{}'.format(df0, scale0, l2_regularization, dropout)
+    if output_id_tag is not None:
+        output_tag += output_id_tag
+
+
+    kwargs = dict(lmda=lmda, alfa=alfa, bin_size=bin_size, n_permute=n_permute,
+                  human_data_path=comp_data_path, video_data_path=video_data_path)
+
+    # ####### GRU #########
+    f_class = KerasGRU
+    f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
+                  dropout=dropout, t=t, optimizer=optimizer, n_epochs=n_epochs, reset_weights=reset_weights)
+
+    sys.stdout.write('Running GRU\n')
+    res = seg_comp_new(f_class, f_opts, **kwargs)
+    res['EventModel'] = ['GRU'] * len(res)
+    res.to_pickle(output_path + 'EventR2_GRU' + output_tag + '.pkl')
+    sys.stdout.write('\n')
+
+
 if __name__ == "__main__":
 
     output_path = './'
@@ -294,9 +357,9 @@ if __name__ == "__main__":
     # comp_data_file = './'
 
     lmda = 10 ** 5
-    alfa = 10 ** -5
+    alfa = 10 ** -1
 
-    main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, n_epochs=50,
+    gru_only(df0=1, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, n_epochs=50,
          lmda=lmda, alfa=alfa,
          optimizer=None, output_id_tag="adam", reset_weights=True,
          output_path=output_path, comp_data_path=comp_data_file, video_data_path=video_data_path)
