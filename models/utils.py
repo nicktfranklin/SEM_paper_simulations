@@ -1,7 +1,7 @@
 import numpy as np
 
 
-def unroll_data(X, t=1):
+def unroll_data(x, t=1):
     """
     This function is used by recurrent neural nets to do back-prop through time.
 
@@ -9,7 +9,7 @@ def unroll_data(X, t=1):
     appends t-1 D-dimensional zero vectors at the beginning.
 
     Parameters:
-        X: array, shape (N, D) or shape (D,)
+        x: array, shape (N, D) or shape (D,)
 
         t: int
             time-steps to truncate the unroll
@@ -20,18 +20,18 @@ def unroll_data(X, t=1):
         X_unrolled: array, shape (N-1, t, D)
 
     """
-    if np.ndim(X) == 2:
-        N, D = np.shape(X)
-    elif np.ndim(X):
-        N, D = 1, np.shape(X)[0]
-        X = np.reshape(X, (1, D))
+    if np.ndim(x) == 2:
+        n, d = np.shape(x)
+    elif np.ndim(x):
+        n, d = 1, np.shape(x)[0]
+        x = np.reshape(x, (1, d))
 
-    X_unrolled = np.zeros((N, t, D))
+    x_unrolled = np.zeros((n, t, d))
 
     # append a t-1 blank (zero) input patterns to the beginning
-    data_set = np.concatenate([np.zeros((t - 1, D)), X])
+    data_set = np.concatenate([np.zeros((t - 1, d)), x])
 
-    for ii in range(N):
-        X_unrolled[ii, :, :] = data_set[ii: ii + t, :]
+    for ii in range(n):
+        x_unrolled[ii, :, :] = data_set[ii: ii + t, :]
 
-    return X_unrolled
+    return x_unrolled
