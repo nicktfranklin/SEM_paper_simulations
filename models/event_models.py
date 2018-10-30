@@ -55,7 +55,7 @@ class EventModel(object):
         self.Sigma = np.eye(d) * 0.1
 
         self.x_history = [np.zeros((0, self.d))]
-        self.y_history = [np.zeros((0, self.d))]
+        # self.y_history = [np.zeros((0, self.d))]
         self.prior_probability = prior_log_prob
 
     def update(self, X, Y):
@@ -146,7 +146,7 @@ class EventModel(object):
             # special case for the first cluster which is already created
             return
         self.x_history.append(np.zeros((0, self.d)))
-        self.y_history.append(np.zeros((0, self.d)))
+        # self.y_history.append(np.zeros((0, self.d)))
 
     def predict_next_generative(self, X):
         X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.d))
@@ -314,7 +314,8 @@ class LinearDynamicSystem(EventModel):
 class KerasLDS(EventModel):
 
     def __init__(self, d, var_df0, var_scale0, optimizer=None, n_epochs=100, init_model=True,
-                 kernel_initializer='glorot_uniform', l2_regularization=0.00, batch_size=32, prior_log_prob=0.0):
+                 kernel_initializer='glorot_uniform', l2_regularization=0.00, batch_size=32, prior_log_prob=0.0,
+                 reset_weights=False):
         EventModel.__init__(self, d, prior_log_prob=prior_log_prob)
 
         if optimizer is None:
@@ -329,6 +330,8 @@ class KerasLDS(EventModel):
         self.var_scale0 = var_scale0
         self.pe = np.zeros((0, d))
         self.d = d
+        self.reset_weights = reset_weights
+        self.training_pairs = []
 
         # initialize the covariance with the mode of the prior distribution
         self.Sigma = np.eye(d) * var_df0 * var_scale0 / (var_df0 + 2)
@@ -355,7 +358,7 @@ class KerasLDS(EventModel):
         self._init_model()
         self.estimate()
 
-    def reset_weights(self):
+    def do_reset_weights(self):
         self.model.set_weights(self.initial_weights)
 
     def append_observation(self, X, Y):
@@ -367,19 +370,22 @@ class KerasLDS(EventModel):
         self.y_train = np.concatenate([self.y_train, np.reshape(Y, newshape=(N, self.d))])
 
     def estimate(self):
-        self.reset_weights()
+        if self.reset_weights:
+            self.do_reset_weights()
+
+        n_pairs = len(self.training_pairs)
 
         def draw_sample_pair():
             # draw a random cluster for the history
-            clust_id = np.random.randint(len(self.x_history))
+            idx = np.random.randint(n_pairs)
+            # x_sample, y_sample = self.training_pairs[ii]
+            # #  picks  random time-point in the history
+            # t0 = np.random.randint(len(self.x_history[clust_id]))
+            #
+            # x_sample = np.reshape(self.x_history[clust_id][t0, :], (1, self.d))
+            # y_sample = np.reshape(self.y_history[clust_id][t0, :], (1, self.d))
 
-            #  picks  random time-point in the history
-            t0 = np.random.randint(len(self.x_history[clust_id]))
-
-            x_sample = np.reshape(self.x_history[clust_id][t0, :], (1, self.d))
-            y_sample = np.reshape(self.y_history[clust_id][t0, :], (1, self.d))
-
-            return x_sample, y_sample
+            return self.training_pairs[idx]
 
         # run batch gradient descent on all of the past events!
         for _ in range(self.n_epochs):
@@ -401,9 +407,9 @@ class KerasLDS(EventModel):
 
         # Update Sigma
         pe = np.zeros((0, self.d))
-        for x_train_0, y_train_0 in zip(self.x_history, self.y_history):
+        for x_train_0, y_train_0 in self.training_pairs:
             for ii in range(np.shape(x_train_0)[0]):
-                y_hat = self.predict_next(x_train_0[ii, :])
+                y_hat = self.model.predict(x_train_0)
                 pe = np.concatenate([self.pe, y_train_0[ii, :] - y_hat])
         if np.shape(self.pe)[0] > 1:
             self.Sigma = np.eye(self.d) * map_variance(pe, self.var_df0, self.var_scale0)
@@ -420,9 +426,12 @@ class KerasLDS(EventModel):
         y_example = Y.reshape((1, self.d))
 
         # concatenate the training example to the active event token
-
         self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
-        self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
+        # self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
+
+        # also, create a list of training pairs (x, y) for efficient sampling
+        #  picks  random time-point in the history
+        self.training_pairs.append(tuple([x_example, y_example]))
 
         if update_estimate:
             self.estimate()
@@ -462,10 +471,11 @@ class KerasMultiLayerPerceptron(KerasLDS):
 
     def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh',
                  optimizer=None, n_epochs=100, init_model=True, kernel_initializer='glorot_uniform',
-                 l2_regularization=0.00, dropout=0.50, prior_log_prob=0.0):
+                 l2_regularization=0.00, dropout=0.50, prior_log_prob=0.0, reset_weights=False):
         KerasLDS.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
                           init_model=False, kernel_initializer=kernel_initializer,
-                          l2_regularization=l2_regularization, prior_log_prob=prior_log_prob)
+                          l2_regularization=l2_regularization, prior_log_prob=prior_log_prob,
+                          reset_weights=reset_weights)
 
         if n_hidden is None:
             n_hidden = d
@@ -512,7 +522,7 @@ class KerasSRN(KerasLDS):
 
     def __init__(self, d, var_df0, var_scale0, t=3,
                  optimizer=None, n_epochs=100, l2_regularization=0.00, batch_size=32,
-                 kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0):
+                 kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0, reset_weights=False):
         #
         # D = dimension of single input / output example
         # t = number of time steps to unroll back in time for the recurrent layer
@@ -526,7 +536,8 @@ class KerasSRN(KerasLDS):
 
         KerasLDS.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
                           init_model=False, kernel_initializer=kernel_initializer,
-                          l2_regularization=l2_regularization, prior_log_prob=prior_log_prob)
+                          l2_regularization=l2_regularization, prior_log_prob=prior_log_prob,
+                          reset_weights=reset_weights)
 
         self.t = t
         self.n_epochs = n_epochs
@@ -536,7 +547,7 @@ class KerasSRN(KerasLDS):
         # history = N x D tensor, N = # of scenes in cluster, D = dimension of single scene
         #
         self.x_history = [np.zeros((0, self.d))]
-        self.y_history = [np.zeros((0, self.d))]
+        # self.y_history = [np.zeros((0, self.d))]
         self.batch_size = batch_size
 
         if init_model:
@@ -579,6 +590,33 @@ class KerasSRN(KerasLDS):
 
         return self.model.predict(x_test)
 
+    def update(self, X, Y, update_estimate=True):
+        if X.ndim > 1:
+            X = X[-1, :]  # only consider last example
+        assert X.ndim == 1
+        assert X.shape[0] == self.d
+        assert Y.ndim == 1
+        assert Y.shape[0] == self.d
+
+        x_example = X.reshape((1, self.d))
+        y_example = Y.reshape((1, self.d))
+
+        # concatenate the training example to the active event token
+        self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
+        # self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
+
+        # also, create a list of training pairs (x, y) for efficient sampling
+        #  picks  random time-point in the history
+        _n = np.shape(self.x_history[-1])[0]
+        x_train_example = np.reshape(
+                    unroll_data(self.x_history[-1][max(_n - self.t, 0):, :], self.t)[-1, :, :], (1, self.t, self.d)
+                )
+        self.training_pairs.append(tuple([x_train_example, y_example]))
+
+        if update_estimate:
+            self.estimate()
+            self.f_is_trained = True
+
     def predict_next_generative(self, X):
         X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.d))
         return self.model.predict(X0)
@@ -588,69 +626,74 @@ class KerasSRN(KerasLDS):
 
     # optional: run batch gradient descent on all past event clusters
     def estimate(self):
-        self.reset_weights()
+        if self.reset_weights:
+            self.do_reset_weights()
+
+        n_pairs = len(self.training_pairs)
+
+        def draw_sample_pair():
+            # draw a random cluster for the history
+            idx = np.random.randint(n_pairs)
+            return self.training_pairs[idx]
+
         # run batch gradient descent on all of the past events!
         for _ in range(self.n_epochs):
 
             # draw a set of training examples from the history
-            x_batch = []
-            y_batch = []
+            # x_batch = []
+            # y_batch = []
+            x_batch = np.zeros((0, self.t, self.d))
+            y_batch = np.zeros((0, self.d))
             for _ in range(self.batch_size):
-                # draw a random cluster for the history
-                clust_id = np.random.randint(len(self.x_history))
-                x_history = self.x_history[clust_id]
-                y_history = self.y_history[clust_id]
 
-                #  picks  random time-point in the history
-                t0 = np.random.randint(len(x_history))
+                x_sample, y_sample = draw_sample_pair()
 
-                # the predictors are the unrolled predictors before t0
-                x_batch.append(np.reshape(
-                    unroll_data(x_history[max(t0 - self.t, 0):t0 + 1, :], self.t)[-1, :, :], (1, self.t, self.d)
-                ))
+                # these data aren't
+                # x_batch.append(x_sample)
+                # y_batch.append(y_sample)
+                x_batch = np.concatenate([x_batch, x_sample], axis=0)
+                y_batch = np.concatenate([y_batch, y_sample], axis=0)
 
-                # the predicted vector at time t0
-                y_batch.append(y_history[t0, :])
-
-            x_batch = np.reshape(x_batch, (self.batch_size, self.t, self.d))
-            y_batch = np.reshape(y_batch, (self.batch_size, self.d))
+            # x_batch = np.reshape(x_batch, (self.batch_size, self.t, self.d))
+            # y_batch = np.reshape(y_batch, (self.batch_size, self.d))
             self.model.train_on_batch(x_batch, y_batch)
 
         # Update Sigma
         pe = np.zeros((0, self.d))
-        for x_train_0, y_train_0 in zip(self.x_history, self.y_history):
+        for x_train_0, y_train_0 in self.training_pairs:
             for ii in range(np.shape(x_train_0)[0]):
-                y_hat = self.predict_next_generative(x_train_0[:ii+1, :])
+                y_hat = self.model.predict(x_train_0)
                 pe = np.concatenate([self.pe, y_train_0[ii, :] - y_hat])
         if np.shape(self.pe)[0] > 1:
             self.Sigma = np.eye(self.d) * map_variance(pe, self.var_df0, self.var_scale0)
 
-    def batch_last_clust(self):
-        """
-        This function is exclusively used for the Botvinick Simulations
-        :return:
-        """
-
-        # draw a set of training examples from the history
-
-        # pull the last cluster
-        x_batch = self.x_history[-1]
-        y_batch = self.y_history[-1]
-
-        x_batch = unroll_data(x_batch, t=np.shape(x_batch)[0])
-
-        self.model.train_on_batch(x_batch, y_batch)
+    # def batch_last_clust(self):
+    #     """
+    #     This function is exclusively used for the Botvinick Simulations
+    #     :return:
+    #     """
+    #
+    #     # draw a set of training examples from the history
+    #
+    #     # pull the last cluster
+    #     x_batch = self.x_history[-1]
+    #     y_batch = self.y_history[-1]
+    #
+    #     x_batch = unroll_data(x_batch, t=np.shape(x_batch)[0])
+    #
+    #     self.model.train_on_batch(x_batch, y_batch)
 
 
 class KerasRecurrentMLP(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
                  n_epochs=100, dropout=0.50, l2_regularization=0.00, batch_size=32,
-                 kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0):
+                 kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0, reset_weights=False):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
                           l2_regularization=l2_regularization, batch_size=batch_size,
-                          kernel_initializer=kernel_initializer, init_model=False, prior_log_prob=prior_log_prob)
+                          kernel_initializer=kernel_initializer, init_model=False, prior_log_prob=prior_log_prob,
+                          reset_weights=reset_weights)
 
         if n_hidden is None:
             self.n_hidden = d
@@ -703,12 +746,12 @@ class KerasGRU(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
                  n_epochs=100, dropout=0.50, l2_regularization=0.00, batch_size=32,
-                 kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0):
+                 kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0, reset_weights=False):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
                           l2_regularization=l2_regularization, batch_size=batch_size,
                           kernel_initializer=kernel_initializer, init_model=False,
-                          prior_log_prob=prior_log_prob)
+                          prior_log_prob=prior_log_prob, reset_weights=reset_weights)
 
         if n_hidden is None:
             self.n_hidden = d
@@ -741,12 +784,13 @@ class KerasLSTM(KerasSRN):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
                  n_epochs=100, dropout=0.50, l2_regularization=0.00,
-                 batch_size=32, kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0):
+                 batch_size=32, kernel_initializer='glorot_uniform', init_model=True, prior_log_prob=0.0,
+                 reset_weights=False):
 
         KerasSRN.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
                           l2_regularization=l2_regularization, batch_size=batch_size,
                           kernel_initializer=kernel_initializer, init_model=False,
-                          prior_log_prob=prior_log_prob)
+                          prior_log_prob=prior_log_prob, reset_weights=reset_weights)
 
         if n_hidden is None:
             self.n_hidden = d
