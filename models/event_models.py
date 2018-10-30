@@ -332,6 +332,7 @@ class KerasLDS(EventModel):
         self.d = d
         self.reset_weights = reset_weights
         self.training_pairs = []
+        self.prediction_errors = np.zeros((0, self.d), dtype=np.float)
 
         # initialize the covariance with the mode of the prior distribution
         self.Sigma = np.eye(d) * var_df0 * var_scale0 / (var_df0 + 2)
@@ -378,13 +379,6 @@ class KerasLDS(EventModel):
         def draw_sample_pair():
             # draw a random cluster for the history
             idx = np.random.randint(n_pairs)
-            # x_sample, y_sample = self.training_pairs[ii]
-            # #  picks  random time-point in the history
-            # t0 = np.random.randint(len(self.x_history[clust_id]))
-            #
-            # x_sample = np.reshape(self.x_history[clust_id][t0, :], (1, self.d))
-            # y_sample = np.reshape(self.y_history[clust_id][t0, :], (1, self.d))
-
             return self.training_pairs[idx]
 
         # run batch gradient descent on all of the past events!
@@ -406,13 +400,11 @@ class KerasLDS(EventModel):
             self.model.train_on_batch(x_batch, y_batch)
 
         # Update Sigma
-        pe = np.zeros((0, self.d))
-        for x_train_0, y_train_0 in self.training_pairs:
-            for ii in range(np.shape(x_train_0)[0]):
-                y_hat = self.model.predict(x_train_0)
-                pe = np.concatenate([self.pe, y_train_0[ii, :] - y_hat])
+        x_train_0, y_train_0 = self.training_pairs[-1]
+        y_hat = self.model.predict(x_train_0)
+        self.prediction_errors = np.concatenate([self.prediction_errors, y_train_0 - y_hat], axis=0)
         if np.shape(self.pe)[0] > 1:
-            self.Sigma = np.eye(self.d) * map_variance(pe, self.var_df0, self.var_scale0)
+            self.Sigma = np.eye(self.d) * map_variance(self.prediction_errors, self.var_df0, self.var_scale0)
 
     def update(self, X, Y, update_estimate=True):
         if X.ndim > 1:
@@ -640,48 +632,23 @@ class KerasSRN(KerasLDS):
         for _ in range(self.n_epochs):
 
             # draw a set of training examples from the history
-            # x_batch = []
-            # y_batch = []
             x_batch = np.zeros((0, self.t, self.d))
             y_batch = np.zeros((0, self.d))
             for _ in range(self.batch_size):
 
                 x_sample, y_sample = draw_sample_pair()
 
-                # these data aren't
-                # x_batch.append(x_sample)
-                # y_batch.append(y_sample)
                 x_batch = np.concatenate([x_batch, x_sample], axis=0)
                 y_batch = np.concatenate([y_batch, y_sample], axis=0)
 
-            # x_batch = np.reshape(x_batch, (self.batch_size, self.t, self.d))
-            # y_batch = np.reshape(y_batch, (self.batch_size, self.d))
             self.model.train_on_batch(x_batch, y_batch)
 
         # Update Sigma
-        pe = np.zeros((0, self.d))
-        for x_train_0, y_train_0 in self.training_pairs:
-            for ii in range(np.shape(x_train_0)[0]):
-                y_hat = self.model.predict(x_train_0)
-                pe = np.concatenate([self.pe, y_train_0[ii, :] - y_hat])
+        x_train_0, y_train_0 = self.training_pairs[-1]
+        y_hat = self.model.predict(x_train_0)
+        self.prediction_errors = np.concatenate([self.prediction_errors, y_train_0 - y_hat], axis=0)
         if np.shape(self.pe)[0] > 1:
-            self.Sigma = np.eye(self.d) * map_variance(pe, self.var_df0, self.var_scale0)
-
-    # def batch_last_clust(self):
-    #     """
-    #     This function is exclusively used for the Botvinick Simulations
-    #     :return:
-    #     """
-    #
-    #     # draw a set of training examples from the history
-    #
-    #     # pull the last cluster
-    #     x_batch = self.x_history[-1]
-    #     y_batch = self.y_history[-1]
-    #
-    #     x_batch = unroll_data(x_batch, t=np.shape(x_batch)[0])
-    #
-    #     self.model.train_on_batch(x_batch, y_batch)
+            self.Sigma = np.eye(self.d) * map_variance(self.prediction_errors, self.var_df0, self.var_scale0)
 
 
 class KerasRecurrentMLP(KerasSRN):
