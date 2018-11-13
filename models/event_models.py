@@ -179,6 +179,7 @@ class Gaussian(EventModel):
     def update(self, X, Y):
         self.update_f0(Y)
         self.f_is_trained = True
+        self.f0_is_trained = True
 
     def _predict_f0(self):
         return self._predict_next(np.zeros(self.d))
@@ -189,7 +190,7 @@ class Gaussian(EventModel):
 
         n = np.shape(self.history)[0]
         if n > 1:
-            self.Sigma = np.eye(self.d) * map_variance(self.history, self.var_df0, self.var_scale0)
+            self.Sigma = np.eye(self.d) * map_variance(self.history - np.tile(self.mu, (n, 1)), self.var_df0, self.var_scale0)
 
 
 class GaussianRandomWalk(EventModel):
