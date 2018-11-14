@@ -434,8 +434,8 @@ class SEM(object):
                 n, k0 = np.shape(post)
                 while k0 < self.k:
                     post = np.concatenate([post, np.zeros((n, 1))], axis=1)
-                    log_like = np.concatenate([log_like, np.zeros((n, 1))], axis=1)
-                    log_prior = np.concatenate([log_prior, np.zeros((n, 1))], axis=1)
+                    log_like = np.concatenate([log_like, np.zeros((n, 1)) - np.inf], axis=1)
+                    log_prior = np.concatenate([log_prior, np.zeros((n, 1)) - np.inf], axis=1)
                     n, k0 = np.shape(post)
 
                 # extend the size of the posterior, etc
