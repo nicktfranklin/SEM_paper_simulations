@@ -190,10 +190,11 @@ class Gaussian(EventModel):
 
         n = np.shape(self.history)[0]
         if n > 1:
-            self.Sigma = np.eye(self.d) * map_variance(self.history - np.tile(self.mu, (n, 1)), self.var_df0, self.var_scale0)
+            self.Sigma = np.eye(self.d) * map_variance(self.history - np.tile(self.mu, (n, 1)), self.var_df0,
+                                                       self.var_scale0)
 
 
-class GaussianRandomWalk(EventModel):
+class DriftModel(EventModel):
     def __init__(self, d, var_df0, var_scale0, prior_log_prob=0.0):
         EventModel.__init__(self, d, prior_log_prob=prior_log_prob)
 
@@ -202,6 +203,7 @@ class GaussianRandomWalk(EventModel):
         self.pe = np.zeros((0, d))
         self.var_df0 = var_df0
         self.var_scale0 = var_scale0
+        self.f0 = np.zeros((0, d))
 
     def _predict_next(self, X):
         if X.ndim > 1:
@@ -215,9 +217,10 @@ class GaussianRandomWalk(EventModel):
             self.Sigma = np.eye(self.d) * map_variance(self.pe, self.var_df0, self.var_scale0)
 
     def _predict_f0(self):
-        return self._predict_next(np.zeros(self.d))
+        return self.f0
 
     def update_f0(self, Y):
+        self.f0 = np.reshape(Y, (1, -1))
         self.pe = np.concatenate([self.pe, np.reshape(Y, (1, -1))])
         self.f_is_trained = True
 
