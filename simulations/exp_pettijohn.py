@@ -71,9 +71,7 @@ def batch(sem_kwargs, gibbs_kwargs, epsilon_e, batch_number=0):
     x_list_no_switch, x_list_switch = generate_task()
     n, d = np.concatenate(x_list_switch).shape
 
-    sem_no_switch = SEM(**sem_kwargs)
-    sem_no_switch.run_w_boundaries(list_events=x_list_no_switch, leave_progress_bar=False)
-
+    # run through with the switch condition
     sem_switch = SEM(**sem_kwargs)
     sem_switch.run_w_boundaries(list_events=x_list_switch, leave_progress_bar=False)
 
@@ -87,15 +85,14 @@ def batch(sem_kwargs, gibbs_kwargs, epsilon_e, batch_number=0):
         t_mem = t + np.random.randint(-gibbs_kwargs['b'], gibbs_kwargs['b'] + 1)
         y_mem_switch.append([x_mem, e_mem, t_mem])
 
+        # do the no-switch condition ahead of time
         e_mem = [None, 0][np.random.rand() < epsilon_e]
         y_mem_noswitch.append([x_mem, e_mem, t_mem])
-
 
     # sample from memory
     gibbs_kwargs['y_mem'] = y_mem_switch
     gibbs_kwargs['sem'] = sem_switch
     y_samples, e_samples, x_samples = gibbs_memory_sampler(**gibbs_kwargs)
-
 
     results = pd.DataFrame({
         'Condition': 'Shift',
@@ -107,6 +104,10 @@ def batch(sem_kwargs, gibbs_kwargs, epsilon_e, batch_number=0):
         'Boundary Acc': evaluate_non_bound_acc(y_samples, y_mem_switch),
         'Batch': [batch_number],
     }, index=[batch_number])
+
+    # run through with the no-switch condition
+    sem_no_switch = SEM(**sem_kwargs)
+    sem_no_switch.run_w_boundaries(list_events=x_list_no_switch, leave_progress_bar=False)
 
     gibbs_kwargs['y_mem'] = y_mem_noswitch
     gibbs_kwargs['sem'] = sem_no_switch

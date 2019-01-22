@@ -142,56 +142,41 @@ def batch(sem_kwargs, gibbs_kwargs, epsilon_e, batch_n=0):
     return results
 
 
-# for speed should generate random parameters
-def gen_random_params():
-    df0 = np.random.randint(1, 100)
-    scale0 = np.random.uniform(0, 1.0) * np.exp(np.random.uniform(-7, 0))
+def batch_no_boundaries(sem_kwargs, gibbs_kwargs, epsilon_e, batch_n=0):
 
-    alpha = np.exp(np.random.uniform(-2, 2))
-    lmda = np.random.uniform(0, 25)
-    log_epsilon = np.random.uniform(-20, 6)
-    b = np.random.randint(2, 5)
-    log_tau = np.random.uniform(-10, 0)
+    # generate an experiment
+    x_list_items, e_tokens = generate_experiment()
+    n, d = np.concatenate(x_list_items).shape
 
-    sem_kwargs = dict(
-        lmda=1.0,
-        alfa=1.0,
-        f_class=KerasMultiLayerPerceptron,
-        f_opts=dict(var_scale0=scale0, var_df0=df0)
-    )
+    pre_locs = [ii for ii in range(len(e_tokens) - 1) if e_tokens[ii] != e_tokens[ii + 1]]
+    pst_locs = [ii for ii in range(1, len(e_tokens)) if e_tokens[ii] != e_tokens[ii - 1]]
 
-    gibbs_kwargs = dict(
-        memory_alpha=alpha,
-        memory_lambda=lmda,
-        memory_epsilon=np.exp(log_epsilon),
-        b=b,  # time corruption
-        tau=np.exp(log_tau),  # feature corruption
-        n_samples=250,
-        n_burnin=100,
-        leave_progress_bar=False,
-    )
-    return df0,  scale0, sem_kwargs, gibbs_kwargs
+    # Train SEM on the stimuli
+    sem = SEM(**sem_kwargs)
+    sem.run_w_boundaries(list_events=[np.concatenate(x_list_items, axis=0)], leave_progress_bar=False)
 
+    # create the corrupted memory trace
+    y_mem = list()  # these are list, not sets, for hashability
 
-def main(n_batch=8):
+    for t in range(n):
+        x_mem = np.concatenate(x_list_items)[t, :] + np.random.randn(d) * gibbs_kwargs['tau']
+        e_mem = [None, 0][np.random.rand() < epsilon_e]
+        t_mem = t + np.random.randint(-gibbs_kwargs['b'], gibbs_kwargs['b'] + 1)
+        y_mem.append([x_mem, e_mem, t_mem])
 
-    df0, scale0, sem_kwargs, gibbs_kwargs = gen_random_params()
+    # add the models to the kwargs
+    y_samples, e_samples, x_samples = gibbs_memory_sampler(y_mem, sem, **gibbs_kwargs)
 
-    results = []
-    for ii in tqdm(range(n_batch), desc='Running Batch'):
-        results.append(batch(sem_kwargs, gibbs_kwargs, batch_n=ii))
-    results = pd.concat(results)
-
-    results.to_pickle('data/seqmem/SeqMem_df_{}_scale_{}_malfa_{}_mlmda_{}_logepsilon_{}_b_{}_tau_{}.pkl'.format(
-        df0,
-        scale0,
-        np.log(gibbs_kwargs['memory_alpha']),
-        gibbs_kwargs['memory_lambda'],
-        np.log(gibbs_kwargs['memory_epsilon']),
-        gibbs_kwargs['b'],
-        np.log(gibbs_kwargs['tau'])
-    ))
-
-
-if __name__ == "__main__":
-    main()
+    results = pd.DataFrame({
+        'Batch': [batch_n],
+        # 'Adj-r2': [adjusted_rand_score(sem.results.e_hat, np.array([0, 1, 0, 1, 0]))],
+        # 'Recon Segment': evaluate_seg(e_samples, e_seg),
+        'Overall Acc': eval_acc(y_samples, y_mem),
+        'Pre-Boundary': np.mean([evaluate_item_position_acc(y_samples, y_mem, t) for t in pre_locs]),
+        'Boundary': np.mean([evaluate_item_position_acc(y_samples, y_mem, t) for t in pst_locs]),
+        'Transitions Pre-Boundary': np.mean([score_transitions(y_samples, y_mem, t) for t in pre_locs]),
+        'Transitions Boundary': np.mean([score_transitions(y_samples, y_mem, t) for t in pst_locs]),
+        'Pre-boundary Acc': eval_item_acc(y_samples, y_mem, pre_locs),
+        'Boundary Acc': eval_item_acc(y_samples, y_mem, pst_locs),
+    })
+    return results
