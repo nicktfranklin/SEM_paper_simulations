@@ -28,7 +28,7 @@ def plate_formula(n, k, err):
     formula:
       D = 3.16(K-0.25)ln(N/err^3)
     where D is the number of dimensions, K is the maximum number of terms
-    to be combined, N is the number of atomic values in the langauge, and
+    to be combined, N is the number of atomic values in the language, and
     err is the probability of error.
 
     USAGE: D = plate_formula(n, k, err)
