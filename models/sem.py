@@ -2,16 +2,7 @@ import numpy as np
 import tensorflow as tf
 from scipy.misc import logsumexp
 from tqdm import tqdm
-from keras.models import model_from_json
-import copy
-import os
 from keras import backend as K
-
-
-# helper f'n that gets all attributes of an object
-#
-def get_object_attributes(obj):
-    return [a for a in dir(obj) if not a.startswith('__') and not callable(getattr(obj, a))]
 
 
 class Results(object):
@@ -66,79 +57,6 @@ class SEM(object):
         # instead of dumping the results, store them to the object
         self.results = None
 
-    def serialize(self, weights_dir='.'):
-        """
-        Serialize SEM object into a dict that can be pickled. Need to take special care of the event models
-        as they don't pickle straightforwardly.
-        """
-        from opt.utils import randstr
-        print 'Serializing SEM object ...'
-
-        dump = dict()
-        for attr_name in get_object_attributes(self):
-            if attr_name == 'event_models':
-                # event models are special as we can't just pickle them
-                #
-                event_dump = dict()
-                for k, event_model in self.event_models.iteritems():
-                    # make shallow copy of event model
-                    # we only want to change a couple of the fields
-                    event_model = copy.copy(event_model)
-
-                    # save model weights to a separate HDF5 file
-                    # Momchil: that's pretty lame but that's the easiest way I could do it.
-                    # https://machinelearningmastery.com/save-load-keras-deep-learning-models/
-                    event_model.weights_filename = os.path.join(
-                        weights_dir, 'event_model_weights_' + randstr(10) + '.h5'
-                    )
-                    event_model.model.save_weights(event_model.weights_filename)
-
-                    print '           saving event model ', k, event_model, ' to ', event_model.weights_filename
-
-                    # change problematic fields (this is why we make a copy of the event_model)
-                    event_model.sess = None  # cannot serialize TF session
-                    event_model.model = event_model.model.to_json()  # jsonify the model structure
-                    event_model.compile_opts = None  # can't serialize the keras optimizers
-
-                    # save the altered event model
-                    event_dump[k] = event_model
-
-                dump['event_models'] = event_dump
-            else:
-                print '           saving attribute ', attr_name
-                dump[attr_name] = getattr(self, attr_name)
-
-        return dump
-
-    def deserialize(self, dump):
-        """
-        Deserialize SEM object after it has been serialized with serialize().
-        Special care is taken for the event models.
-        """
-        print 'Deserializing SEM object ...'
-
-        for attr_name in get_object_attributes(self):
-            if attr_name == 'event_models':
-                d = dump['D']
-                dummy_event_model = self.f_class(d, **self.f_opts)  # dummy event model to get the keras
-                #  optimizer (can't serialize it)
-
-                event_dump = dump['event_models']
-                for k, event_model in event_dump.iteritems():
-                    print '       loading event model', k, ' from ', event_model.weights_filename
-
-                    # bring model back to normal
-                    event_model.sess = tf.Session()  # restart TF session for model
-                    event_model.model = model_from_json(event_model.model)  # restore model structure from json
-                    event_model.model.load_weights(event_model.weights_filename)  # restore model weights from HDF5
-                    event_model.model.compile(**dummy_event_model.compile_opts)  # compile model using dummy event model
-                    #  options (can't serialize them)
-
-                    self.event_models[k] = event_model
-            else:
-                print '      setting ', attr_name, ' to ', dump[attr_name]
-                setattr(self, attr_name, dump[attr_name])
-
     def pretrain(self, x, event_types, event_boundaries, progress_bar=True, leave_progress_bar=True):
         """
         Pretrain a bunch of event models on sequence of scenes X
@@ -162,26 +80,34 @@ class SEM(object):
             def my_it(l):
                 return range(l)
 
-        #
+        # store a compiled version of the model and session for reuse
+        self.session = tf.Session()
+        K.set_session(self.session)
+        self.model = None
+
         for ii in my_it(n):
-            # print 'pretraining at scene ', n
 
             x_curr = x[ii, :].copy()  # current scene
             k = event_types[ii]  # current event
 
             if k not in self.event_models.keys():
                 # initialize new event model
-                self.event_models[k] = self.f_class(self.d, **self.f_opts)
+                new_model = self.f_class(self.d, **self.f_opts)
+                if self.model is None:
+                    self.model = new_model.init_model()
+                else:
+                    new_model.set_model(self.session, self.model)
+                self.event_models[k] = new_model
 
             # update event model
             if not event_boundaries[ii]:
                 # we're in the same event -> update using previous scene
                 assert self.x_prev is not None
-                self.event_models[k].update(self.x_prev, x_curr)
+                self.event_models[k].update(self.x_prev, x_curr, update_estimate=True)
             else:
                 # we're in a new event -> update the initialization point only
                 self.event_models[k].new_token()
-                self.event_models[k].update_f0(x_curr)
+                self.event_models[k].update_f0(x_curr, update_estimate=True)
 
             self.c[k] += 1  # update counts
 
@@ -229,7 +155,7 @@ class SEM(object):
         # prior /= np.sum(prior)
         return prior
 
-    def run(self, x, k=None, progress_bar=True, leave_progress_bar=True, minimize_memory=False):
+    def run(self, x, k=None, progress_bar=True, leave_progress_bar=True, minimize_memory=False, compile_model=True):
         """
         Parameters
         ----------
@@ -284,6 +210,12 @@ class SEM(object):
             def my_it(l):
                 return range(l)
 
+        # store a compiled version of the model and session for reuse
+        if compile_model:
+            self.session = tf.Session()
+            K.set_session(self.session)
+            self.model = None
+
         for ii in my_it(n):
 
             x_curr = x[ii, :].copy()
@@ -298,7 +230,13 @@ class SEM(object):
 
             for k0 in active:
                 if k0 not in self.event_models.keys():
-                    self.event_models[k0] = self.f_class(self.d, **self.f_opts)
+                    new_model = self.f_class(self.d, **self.f_opts)
+                    if self.model is None:
+                        self.model = new_model.init_model()
+                    else:
+                        new_model.set_model(self.session, self.model)
+                    self.event_models[k0] = new_model
+                    new_model = None  # clear the new model variable from memory
 
                 # get the log likelihood for each event model
                 model = self.event_models[k0]
@@ -370,6 +308,7 @@ class SEM(object):
                     model = self.event_models[self.k_prev]
                     y_hat[ii, :] = model.predict_next(self.x_prev)
                     pe[ii] = np.linalg.norm(x_curr - y_hat[ii, :])
+                    # surprise[ii] = log_like[ii, self.k_prev]
 
             self.c[k] += 1  # update counts
             # update event model
@@ -391,9 +330,15 @@ class SEM(object):
             self.results.log_post = log_like + log_prior
             return
 
+        # calculate Bayesian Surprise
+        log_post = log_like[:-1, :] + log_prior[:-1, :]
+        log_post -= np.tile(logsumexp(log_post, axis=1), (np.shape(log_post)[1], 1)).T
+        surprise = np.concatenate([[0], logsumexp(log_post + log_like[1:, :], axis=1)])
+
         self.results = Results()
         self.results.post = post
         self.results.pe = pe
+        self.results.surprise = surprise
         self.results.log_like = log_like
         self.results.log_prior = log_prior
         self.results.e_hat = np.argmax(log_like + log_prior, axis=1)
@@ -474,7 +419,12 @@ class SEM(object):
             # loop through each potentially active event model
             for k0 in active:
                 if k0 not in self.event_models.keys():
-                    self.event_models[k0] = self.f_class(self.d, **self.f_opts)
+                    new_model = self.f_class(self.d, **self.f_opts)
+                    if self.model is None:
+                        self.model = new_model.init_model()
+                    else:
+                        new_model.set_model(self.session, self.model)
+                    self.event_models[k0] = new_model
 
                 # get the log likelihood for each event model
                 model = self.event_models[k0]
@@ -536,8 +486,16 @@ class SEM(object):
         self._update_state(np.concatenate(list_events, axis=0), k)
         del k  # use self.k and self.d
 
+        # store a compiled version of the model and session for reuse
         if self.k_prev is None:
-            self.event_models[0] = self.f_class(self.d, **self.f_opts)  # initialize the first event model
+            self.session = tf.Session()
+            K.set_session(self.session)
+
+            # initialize the first event model
+            new_model = self.f_class(self.d, **self.f_opts)
+            self.model = new_model.init_model()
+
+            self.event_models[0] = new_model
 
     def run_w_boundaries(self, list_events, progress_bar=True, leave_progress_bar=True):
         """
@@ -581,5 +539,9 @@ class SEM(object):
             self.update_single_event(x)
 
     def clear_event_models(self):
+        for e in self.event_models.itervalues():
+            e.model = None
         self.event_models = None
+        tf.reset_default_graph()  # for being sure
         K.clear_session()
+
