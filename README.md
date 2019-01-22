@@ -13,15 +13,14 @@ without installation:
 * `Demo - Toy Data (Segmentation)`: These simulations demonstrate how SEM can segement simple, 2D dynamical systems with
 various different methods of estimating the event dynamics of the system.
 * `Demo - Structure`: These simulations show how SEM draws event boundaries that respect structure in vector space (from the paper)
-* `Demo - HRR.ipynb`
+* `Demo - HRR.ipynb`: Demonstration of the Holographic reduced representation
 * `Demo - Toy Data.ipynb`: Simulations of the SEM model segmenting 2D data sets
 * `Demo - Motion Capture Data.ipynb`: Simulations of the SEM model on the 3D motion capture data. 
 
 
 #### Installation Instructions
 
-This library run on Python 2.7 and uses the tensorflow, keras and Edward libraries for neural networks. This will 
-probably change in the future as we elaborate and/or streamline the models to best suit our needs.
+This library run on Python 2.7 and uses the tensorflow and keras and libraries for neural networks. 
 
 I recommend using Anaconda python and a virtual environment. [You can find instructions to install Anaconda
  here](https://docs.anaconda.com/anaconda/install/).
