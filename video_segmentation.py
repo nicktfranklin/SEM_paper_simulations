@@ -214,7 +214,7 @@ def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_p
 
     # load the comparison data
     # experiment 1:
-    data = pd.read_csv(human_data_path + 'data021011.dat', delimiter='\t')
+    data = pd.read_csv(human_data_path + 'zachs2006_data021011.dat', delimiter='\t')
     binned_sax, binned_bed, binned_dishes = load_comparison_data(data)
 
     # for memory management, put these into a method
@@ -460,7 +460,7 @@ def gru_only(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output
                   human_data_path=comp_data_path, video_data_path=video_data_path)
 
     # ####### GRU #########
-    f_class = KerasGRU
+    f_class = GRUEvent
     f_opts = dict(var_df0=df0, var_scale0=scale0, l2_regularization=l2_regularization,
                   dropout=dropout, t=t, optimizer=optimizer, n_epochs=n_epochs, reset_weights=reset_weights)
 
