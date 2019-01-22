@@ -3,9 +3,12 @@ import numpy as np
 from models.sem import SEM
 from models.event_models import *
 from scipy.special import logsumexp
-from tqdm import tqdm
 import sys, os, gc
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+from scipy import stats
 from scipy.stats import multivariate_normal
+import seaborn as sns
 
 
 # helper functions
@@ -15,6 +18,15 @@ def z_score(x):
 
 def get_r2(x, y):
     return np.corrcoef(z_score(x), z_score(y))[0][1] ** 2
+
+
+def get_hdi(x, interval=0.95):
+    _x = np.sort(x)
+    n = np.shape(_x)[0]
+    idx = int((1 - interval) * n)
+    lb = _x[idx]
+    ub = _x[n - idx - 1]
+    return lb, ub
 
 
 def convert_type_token(event_types):
@@ -36,13 +48,47 @@ def get_event_duration(event_types, frequency=30):
     return np.array(lens, dtype=float) / frequency
 
 
-def load_comparison_data(data, bin_size=1.0):
+def bin_times(array, max_seconds, bin_size=1.0):
+    cumulative_binned = [np.sum(array <= t0 * 1000) for t0 in np.arange(bin_size, max_seconds + bin_size, bin_size)]
+    binned = np.array(cumulative_binned)[1:] - np.array(cumulative_binned)[:-1]
+    binned = np.concatenate([[cumulative_binned[0]], binned])
+    return binned
 
-    def bin_times(array, max_seconds, bin_size=bin_size):
-        cumulative_binned = [np.sum(array <= t0 * 1000) for t0 in np.arange(bin_size, max_seconds + bin_size, bin_size)]
-        binned = np.array(cumulative_binned)[1:] - np.array(cumulative_binned)[:-1]
-        binned = np.concatenate([[cumulative_binned[0]], binned])
-        return binned
+
+def get_subjs_rpb(data, bin_size=1.0):
+    # get the grouped data
+    #     binned_sax, binned_bed, binned_dishes = load_comparison_data(data)
+    grouped_data = np.concatenate(load_comparison_data(data, bin_size=bin_size))
+
+    r_pbs = []
+
+    for sj in set(data.SubjNum):
+        _binned_sax = bin_times(data.loc[(data.SubjNum == sj) & (data.Movie == 'A'), 'MS'], 185, bin_size)
+        _binned_bed = bin_times(data.loc[(data.SubjNum == sj) & (data.Movie == 'B'), 'MS'], 336, bin_size)
+        _binned_dishes = bin_times(data.loc[(data.SubjNum == sj) & (data.Movie == 'C'), 'MS'], 255, bin_size)
+        subs = np.concatenate([_binned_sax, _binned_bed, _binned_dishes])
+
+        r_pbs.append(get_point_biserial(subs, grouped_data))
+    return r_pbs
+
+
+def get_binned_boundaries(posterior, bin_size=1.0, frequency=30.0):
+    e_hat = np.argmax(posterior, axis=1)
+
+    frame_time = np.arange(1, len(e_hat) + 1) / float(frequency)
+    index = np.arange(0, np.max(frame_time), bin_size)
+
+    boundaries = np.concatenate([[0], e_hat[1:] != e_hat[:-1]])
+
+    boundaries_binned = []
+    for t in index:
+        boundaries_binned.append(np.sum(
+            boundaries[(frame_time >= t) & (frame_time < (t + bin_size))]
+        ))
+    return np.array(boundaries_binned, dtype=bool)
+
+
+def load_comparison_data(data, bin_size=1.0):
 
     # Movie A is Saxaphone (185s long)
     # Movie B is making a bed (336s long)
@@ -52,13 +98,13 @@ def load_comparison_data(data, bin_size=1.0):
     n_subjs = len(set(data.SubjNum))
 
     sax_times = np.sort(list(set(data.loc[data.Movie == 'A', 'MS']))).astype(np.float32)
-    binned_sax = bin_times(sax_times, 185, 1.0) / np.float(n_subjs)
+    binned_sax = bin_times(sax_times, 185, bin_size) / np.float(n_subjs)
 
     bed_times = np.sort(list(set(data.loc[data.Movie == 'B', 'MS']))).astype(np.float32)
-    binned_bed = bin_times(bed_times, 336, 1.0) / np.float(n_subjs)
+    binned_bed = bin_times(bed_times, 336, bin_size) / np.float(n_subjs)
 
     dishes_times = np.sort(list(set(data.loc[data.Movie == 'C', 'MS']))).astype(np.float32)
-    binned_dishes = bin_times(dishes_times, 255, 1.0) / np.float(n_subjs)
+    binned_dishes = bin_times(dishes_times, 255, bin_size) / np.float(n_subjs)
 
     return binned_sax, binned_bed, binned_dishes
 
@@ -129,11 +175,10 @@ def get_binned_boundaries(e_hat, bin_size=1.0, frequency=30.0):
         boundaries_binned.append(np.sum(
             boundaries[(frame_time >= t) & (frame_time < (t + bin_size))]
         ))
-    return np.array(boundaries_binned)
+    return np.array(boundaries_binned, dtype=bool)
 
 
 def get_point_biserial(boundaries_binned, binned_comp):
-    print np.shape(boundaries_binned), np.shape(binned_comp)
     M_1 = np.mean(binned_comp[boundaries_binned == 1])
     M_0 = np.mean(binned_comp[boundaries_binned == 0])
 
@@ -142,9 +187,7 @@ def get_point_biserial(boundaries_binned, binned_comp):
     n = n_1 + n_0
 
     s = np.std(binned_comp)
-    print M_1, M_0, n_1, n_0, n, s
-
-    r_pb = (M_1 - M_0) / s * np.sqrt(n_1 * n_0 / (n**2))
+    r_pb = (M_1 - M_0) / s * np.sqrt(n_1 * n_0 / (float(n)**2))
     return r_pb
 
 
@@ -207,10 +250,72 @@ def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_p
     # calculate the point-biserial correlation
     binned_bounds = np.concatenate([binned_sax_bounds, binned_bed_bounds, binned_dishes_bounds])
     binned_comp_bounds = np.concatenate([binned_sax, binned_bed, binned_dishes])
-    r_bp = get_point_biserial(binned_bounds, binned_comp_bounds)
+    r_pb = get_point_biserial(binned_bounds, binned_comp_bounds)
+
+    # get the individual subject point-biserial correlations
+    r_pbs = get_subjs_rpb(data)
+
+    # # Figure 1: Example of segmentation
+    plt.figure(figsize=(5.0, 5.0))
+    ax = plt.subplot2grid((2, 2), (0, 0), colspan=2)
+
+    plt.plot(binned_dishes, label='Subject Boundaries')
+    plt.xlabel('Time (seconds)')
+    plt.ylabel('Boundary Probability')
+
+    b = np.arange(len(binned_dishes_bounds))[binned_dishes_bounds][0]
+    plt.plot([b, b], [0, 1], 'k:', label='Model Boundary', alpha=0.75)
+    for b in np.arange(len(binned_dishes_bounds))[binned_dishes_bounds][1:]:
+        plt.plot([b, b], [0, 1], 'k:', alpha=0.75)
+
+    plt.legend(loc='upper right', framealpha=1.0)
+    plt.ylim([0, 0.6])
+    plt.title('"Washing Dishes"')
+    sns.despine()
+
+    ## second plot: correlation between model probability and human segmentation
+    ax = plt.subplot2grid((2, 2), (1, 0), colspan=1)
+    plt.scatter(binned_model_prob, binned_comp_data, color='k', s=10, alpha=0.1)
+    plt.ylabel('Boundaries Frequency')
+    plt.xlabel('Model log Boundary Probability')
+    x = binned_model_prob
+    y = binned_comp_data
+    y = y[np.argsort(x)]
+    x = np.sort(x)
+    X = sm.add_constant(x)
+    mod = sm.OLS(y, X)
+    res = mod.fit()
+    y_hat = res.predict(X)
+    plt.plot(x, res.predict(X))
+
+    n = len(x)
+    dof = n - res.df_model - 1
+    t = stats.t.ppf(1 - 0.025, df=dof)
+    s_err = np.sum(np.power(y - y_hat, 2))
+    conf = t * np.sqrt((s_err / (n - 2)) * (1.0 / n + (np.power((x - np.mean(x)), 2) /
+                                                       ((np.sum(np.power(x, 2))) - n * (np.power(np.mean(x), 2))))))
+
+    upper = y_hat + abs(conf)
+    lower = y_hat - abs(conf)
+    plt.fill_between(x, lower, upper, alpha=0.25)
+
+    ## Third plot: distribution of point-biserial correlations
+    ax = plt.subplot2grid((2, 2), (1, 1), colspan=1)
+    sns.distplot(r_pbs, ax=ax, norm_hist=False, label='Subjects', bins=10, color='k')
+    r_pb_model = get_point_biserial(binned_bounds, binned_comp_bounds)
+    lb, ub = ax.get_ylim()
+    plt.plot([r_pb_model, r_pb_model], [0, ub], 'r', label='Model', lw='3')
+    plt.xlabel(r'Point-biserial correlation')
+    plt.ylabel('Frequency')
+
+    plt.subplots_adjust(hspace=0.5, wspace=0.5)
+    sns.despine()
+    plt.savefig('Segmentation_dishes.pdf', dpi=600, bbox_inches='tight')
+
 
     # run permutation test
     r2_permuted = [None] * n_permute
+    r_pb_permuted = [None] * n_permute
     for jj in range(n_permute):
 
         # permute each of the three videos' model probability
@@ -220,6 +325,17 @@ def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_p
         binned_model_prob = np.concatenate([binned_sax_prob, binned_bed_prob, binned_dishes_prob])
         r2_permuted[jj] = get_r2(binned_comp_data, binned_model_prob)
 
+        # repeat, but for r pb
+
+        np.random.shuffle(binned_sax_bounds)
+        np.random.shuffle(binned_bed_bounds)
+        np.random.shuffle(binned_dishes_bounds)
+        binned_bounds = np.concatenate([binned_sax_bounds, binned_bed_bounds, binned_dishes_bounds])
+        r_pb_permuted[jj] = get_point_biserial(binned_bounds, binned_comp_bounds)
+
+    lb_r2_permuted, ub_r2_permuted = get_hdi(r2_permuted, interval=0.95)
+    lb_r_pb_permuted, ub_r_pb_permuted = get_hdi(r_pb_permuted, interval=0.95)
+
     return pd.DataFrame({
         'Bin Size': bin_size,
         'Event Length (Sax)': sax_duration,
@@ -228,8 +344,15 @@ def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_p
         'Model r2': r2,
         'Permutation Mean': np.mean(r2_permuted),
         'Permutation Std': np.std(r2_permuted),
+        'Permutation 95% lb': lb_r2_permuted,
+        'Permutation 95% ub': ub_r2_permuted,
         'Permutation p-value': np.mean((r2 - np.array(r2_permuted) > 0)),
-        'Point-biserial correlation coeff': r_bp,
+        'Point-biserial correlation coeff': r_pb,
+        'Point-biserial correlation coeff (permuted)': np.mean(r_pb_permuted),
+        'Point-biserial correlation coeff (permutation lb)': lb_r_pb_permuted,
+        'Point-biserial correlation coeff (permutation ub)': ub_r_pb_permuted,
+        'Point-biserial correlation coeff (permutation p-value)': np.mean((r2 - np.array(r2_permuted) > 0)),
+        'Point-biserial correlation coeff (permutation Std)': np.std(r_pb_permuted),
         'LogLoss': sax_loss + bed_loss + dishes_loss,
     }, index=[0])
 
@@ -257,7 +380,7 @@ def main(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output_pat
     sys.stdout.write('\n')
 
     # ####### Gaussian Random Walk #########
-    f_class = GaussianRandomWalk
+    f_class = DriftModel
     f_opts = dict(var_df0=df0, var_scale0=scale0)
     kwargs['lmda'] = lmda  # change this back for other models
     sys.stdout.write('Running Random Walk\n')
@@ -359,9 +482,9 @@ if __name__ == "__main__":
     lmda = 10 ** 5
     alfa = 10 ** -1
 
-    gru_only(df0=1, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, n_epochs=50,
+    gru_only(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=10, n_epochs=50,
          lmda=lmda, alfa=alfa,
-         optimizer=None, output_id_tag="adam", reset_weights=True,
+         optimizer=None, output_id_tag="adam", #reset_weights=True,
          output_path=output_path, comp_data_path=comp_data_file, video_data_path=video_data_path)
 
     # time_test(df0=10, scale0=0.9, l2_regularization=0.0, dropout=0.5, t=10, data_path=data_path)

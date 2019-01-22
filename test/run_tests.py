@@ -19,7 +19,7 @@ from coffee_shop_world_data import CoffeeShopWorldData
 import sys
 import os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), os.path.pardir)))
-from models import SEM, KerasLDS, LinearDynamicSystem, KerasMultiLayerPerceptron
+from models import SEM, KerasLDS, LinearEvent, KerasMultiLayerPerceptron
 from models import KerasSRN, KerasGRU
 from opt.utils import evaluate, randstr
 # end of imports -- this line is a total hack so we can get the imports for the jupyter notebooks. Pls don't remove
@@ -192,12 +192,12 @@ def run_test(pretrain_data, test_data, test_idx):
 
         sem.pretrain(pretrain_data.X, pretrain_data.y)
 
-        sem.C[0] = 1000000000 # TODO FIXME NOTE rm -rf
-        sem.C[1] = 1000000000
+        sem.c[0] = 1000000000 
+        sem.c[1] = 1000000000
    
-        # save results
+        # save video_results
         results_filename = get_results_filename(test_idx, 'pretrain')
-        print 'Saving pretraining results to file ', results_filename
+        print 'Saving pretraining video_results to file ', results_filename
         res = {'pretrain_data': pretrain_data,
                'Omega': Omega,
                'sem': sem.serialize(OUTPUT_DIR)}
@@ -205,12 +205,12 @@ def run_test(pretrain_data, test_data, test_idx):
 
     # run SEM on test data
     #
-    post, pe, log_lik, log_prior = sem.run(test_data.X, K=K, return_pe=True, return_lik_prior=True)
+    post, pe, log_lik, log_prior = sem.run(test_data.X, k=K, return_pe=True, return_lik_prior=True)
     mi, r = test_data.performance(post)
 
-    # save results
+    # save video_results
     results_filename = get_results_filename(test_idx)
-    print 'Saving results to file ', results_filename
+    print 'Saving video_results to file ', results_filename
     res = {'test_data': test_data,
            'Omega': Omega,
            'sem': sem.serialize(OUTPUT_DIR),
@@ -247,7 +247,7 @@ def write(tests_to_run, test_datas):
             code.append(line)
     nb_cells.append(new_code_cell(source=code))
 
-    # summary results
+    # summary video_results
     #
     results_filename = get_results_filename(None, 'summary')
     code = ["# Show summary statistics\n",
@@ -352,7 +352,7 @@ def write(tests_to_run, test_datas):
         # Alternative -- load sem from pickle file
         #
         results_filename = get_results_filename(test_idx)
-        code = ["# Alternatively, load results from past execution\n",
+        code = ["# Alternatively, load video_results from past execution\n",
                 "#\n",
                 "res = read_pickle('" + results_filename + "')\n",
                 "sem.deserialize(res['sem'])\n",
@@ -430,10 +430,10 @@ if __name__ == "__main__":
         mis.append(mi)
         rs.append(r)
 
-    # save summary results
+    # save summary video_results
     #
     results_filename = get_results_filename(None, 'summary')
-    print 'Saving summary results to file ', results_filename
+    print 'Saving summary video_results to file ', results_filename
     res = {'tests_to_run': tests_to_run,
            'tests': tests,
            'mis': mis,

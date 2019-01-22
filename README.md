@@ -10,6 +10,9 @@ The main code is listed in the `models` module:
     
 There are a few prepackaged demonstrations in Jupyter notebooks. These have been pre-run and can be opened on github
 without installation:
+* `Demo - Toy Data (Segmentation)`: These simulations demonstrate how SEM can segement simple, 2D dynamical systems with
+various different methods of estimating the event dynamics of the system.
+* `Demo - Structure`: These simulations show how SEM draws event boundaries that respect structure in vector space (from the paper)
 * `Demo - HRR.ipynb`
 * `Demo - Toy Data.ipynb`: Simulations of the SEM model segmenting 2D data sets
 * `Demo - Motion Capture Data.ipynb`: Simulations of the SEM model on the 3D motion capture data. 

@@ -3,7 +3,7 @@ import tensorflow as tf
 import pandas as pd
 
 from models import KerasGRU, KerasSRN, KerasLSTM
-from opt.csw_utils import parse_story, parser_fight, parser_poetry
+from simulations.csw_utils import parse_story, parser_fight, parser_poetry
 from opt import embed, encode
 from tqdm import tqdm
 

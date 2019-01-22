@@ -13,7 +13,7 @@ from models import *
 #
 
 def make_task(d=25, n_rooms=10):
-    constant = np.sqrt(d) * 1.5   # this normalizes the variance so we can use the same parameters
+    constant = np.sqrt(d) * 1.1
 
     # note: in the experiment there were 66 events and 51 probes
     verbs = {v: np.random.randn(1, d) / constant for v in 'enter put_down pick_up leave'.split()}
@@ -29,7 +29,8 @@ def make_task(d=25, n_rooms=10):
 
     list_objects = []
     for ii in range(n_rooms):
-        event = np.tile(ctx[ii], (4, 1))
+        #         event = np.tile(ctx[ii], (4, 1))
+        event = np.zeros((4, d))
         event += np.concatenate([
             np.tile(objects_a[ii], (2, 1)),
             np.tile(objects_b[ii], (2, 1))
@@ -120,9 +121,9 @@ def batch_post(sem_model, gibbs_kwargs, epsilon_e=0.25):
             t_mem = t + np.random.randint(-gibbs_kwargs['b'], gibbs_kwargs['b'] + 1)
             y_mem.append([x_mem, e_mem, t_mem])
 
-        # for speed, just reconstruct the past 3 events at max
-        if len(y_mem) > 3 * 4:
-            y_mem = y_mem[-12:]
+        # # for speed, just reconstruct the past 3 events at max
+        # if len(y_mem) > 3 * 4:
+        #     y_mem = y_mem[-12:]
 
         # reconstruct
         gibbs_kwargs['y_mem'] = y_mem
@@ -171,7 +172,7 @@ if __name__ == "__main__":
 
     # experiment parameters
 
-    n_batch = 15
+    n_batch = 1
 
     res = []
     for ii in tqdm(range(n_batch)):
@@ -204,4 +205,4 @@ if __name__ == "__main__":
         res0['Condition'] = 'Post-Boundary Test'
         res = pd.concat([res, res0])
 
-        res.to_pickle('sims_radvansky.pkl')
+        res.to_pickle('sims_radvansky_2.pkl')

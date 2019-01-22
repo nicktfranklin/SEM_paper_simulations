@@ -164,5 +164,72 @@ def single_subj(sem_kwargs, gibbs_kwargs, epsilon_e, batch_n=0, n_lists=16):
 
     return pd.DataFrame(results)
 
+
+def single_subj_debug(sem_kwargs, gibbs_kwargs, epsilon_e, batch_n=0, n_lists=16):
+    # code starts here
+
+    sem = SEM(**sem_kwargs)
+
+    results = []
+    color_one = None
+    color_two = None
+    for jj in tqdm(range(n_lists), desc='Single Subject'):
+        # generate an experiment
+        x_list_items, e_tokens, color_one, color_two = generate_experiment(color_one=color_one, color_two=color_two)
+        n, d = np.concatenate(x_list_items).shape
+
+        sem.run_w_boundaries(list_events=x_list_items, progress_bar=False)
+
+        e_seg = np.reshape([[ii] * np.sum(e_tokens == t, dtype=int) for t, ii in enumerate(sem.results.e_hat[-6:])], -1)
+
+        # create the corrupted memory trace
+        y_mem = list()  # these are list, not sets, for hashability
+
+        for t in range(n):
+            x_mem = np.concatenate(x_list_items)[t, :] + np.random.randn(d) * gibbs_kwargs['tau']
+            e_mem = [None, e_seg[t]][np.random.rand() < epsilon_e]
+            t_mem = t + np.random.randint(-gibbs_kwargs['b'], gibbs_kwargs['b'] + 1)
+            y_mem.append([x_mem, e_mem, t_mem])
+
+        # add the models to the kwargs
+        y_samples, e_samples, x_samples = gibbs_memory_sampler(y_mem, sem, **gibbs_kwargs)
+
+        # get the object-color memory
+        c1 = np.linalg.norm(x_samples - color_one, axis=2)
+        c2 = np.linalg.norm(x_samples - color_two, axis=2)
+
+        c = np.concatenate([
+            c1[:, 0:6] > c2[:, 0:6],
+            c1[:, 6:12] < c2[:, 6:12],
+            c1[:, 12:18] > c2[:, 12:18],
+            c1[:, 18:24] < c2[:, 18:24],
+            c1[:, 24:30] > c2[:, 24:30],
+            c1[:, 30:36] < c2[:, 30:36],
+        ], axis=1)
+        obj_color_boundary = np.mean([np.mean(c, axis=0)[ii] for ii in np.arange(0, 36, 6)])
+        obj_color_nonbound = np.mean([np.mean(c, axis=0)[ii] for ii in np.arange(36) if ii % 6 != 0])
+
+        # get the order memory
+        # test pairs for temporal order
+        boundary_items = np.arange(0, 36, 6)[1:]
+        non_boundary = (np.arange(0, 36, 6) - 1)[1:]
+
+        order_boundary = np.mean([np.mean(compare_two_time(ii, ii - 4, y_samples, y_mem)) for ii in boundary_items])
+        order_nonbound = np.mean([np.mean(compare_two_time(ii, ii - 4, y_samples, y_mem)) for ii in non_boundary])
+
+        results.append({
+            'Batch': batch_n,
+            'List Number': jj,
+            'Adj-r2': adjusted_rand_score(sem.results.e_hat[-6:], np.array([0, 1, 0, 1, 0, 1])),
+            'Recon Segment': evaluate_seg(e_samples, e_seg),
+            'Overall Acc': eval_acc(y_samples, y_mem),
+            'Temporal Order, Boundary': order_boundary,
+            'Temporal Order, NonBound': order_nonbound,
+            'Object-Color, Boundary': obj_color_boundary,
+            'Object-Color, NonBound': obj_color_nonbound
+        })
+
+    return pd.DataFrame(results)
+
 if __name__ == "__main__":
     pass
