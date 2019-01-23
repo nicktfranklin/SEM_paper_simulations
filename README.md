@@ -8,15 +8,26 @@ The main code is listed in the `models` module:
 * `models.event_models`: contains code for the various neural network models used by SEM. They all 
     share a similar structures
     
-There are a few prepackaged demonstrations in Jupyter notebooks. These have been pre-run and can be opened on github
-without installation:
+There are a few prepackaged demonstrations in Jupyter notebooks meant to demonstrate basic functions of the model.
+ These have been pre-run and can be opened on github without installation:
 * `Demo - Toy Data (Segmentation)`: These simulations demonstrate how SEM can segement simple, 2D dynamical systems with
 various different methods of estimating the event dynamics of the system.
-* `Demo - Structure`: These simulations show how SEM draws event boundaries that respect structure in vector space (from the paper)
 * `Demo - HRR.ipynb`: Demonstration of the Holographic reduced representation
-* `Demo - Toy Data.ipynb`: Simulations of the SEM model segmenting 2D data sets
 * `Demo - Motion Capture Data.ipynb`: Simulations of the SEM model on the 3D motion capture data. 
+* `Segmentation - Generalizing Structure`: a demonstratation of how the HRR and Bayesian inference are used
+to generalize structure when delineating event boundaries.
 
+
+There are also multiple simulations that demonstrates how the model can capture a wide range of empirical phenomena
+in the event cognition literature:
+* `Segmentation - Video (Dishes)`: show human-like segementation of video data, originally used in Zacks & Tversky, 2001.
+The dimensionality of the videos has been reduced using a variational auto-encoder, the code for which is available as 
+ a seperate library [https://github.com/ProjectSEM/VAE-video](https://github.com/ProjectSEM/VAE-video)
+* `Segmentation - Schapiro (n250)`: a simulation of the task found in Schapiro, et al, 2013.
+* `Memory Simluation (Bower, 3 setences)`: a simulation of the classic finding in Bower, 1979
+* `Memory Simluation (Radvansky & Copeland, 2006)`: a simulation of the findings in Radvansky & Copeland, 2006
+* `Memory Simluation (Pettijohn, et al, 2016)`:a simulation of the findings in Pettijohn, et al, 2016
+* `Memory Simluation (Dubrow and Davachi, 2013; 2016)`: a simulation of the finding in Dubrow and Davachi, 2013
 
 #### Installation Instructions
 
@@ -44,4 +55,4 @@ To deactivate the virtual environment, run
 
 ##### Known issues:
 
-* Progress bars seem to have problems with this installation.
+* Progress bars seem to have problems with this installation. 
