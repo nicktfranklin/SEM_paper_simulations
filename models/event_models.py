@@ -521,7 +521,7 @@ class RecurentLinearEvent(LinearEvent):
 
 class RecurrentEvent(RecurentLinearEvent):
 
-    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
+    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, optimizer=None,
                  n_epochs=10, dropout=0.50, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0, reset_weights=False):
 
@@ -534,7 +534,6 @@ class RecurrentEvent(RecurentLinearEvent):
             self.n_hidden = d
         else:
             self.n_hidden = n_hidden
-        self.hidden_act = hidden_act
         self.dropout = dropout
 
         if init_model:
@@ -544,7 +543,7 @@ class RecurrentEvent(RecurentLinearEvent):
         self.model = Sequential()
         # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.d-dimensional vector
-        self.model.add(SimpleRNN(self.n_hidden, input_shape=(self.t, self.d), #activation=self.hidden_act,
+        self.model.add(SimpleRNN(self.n_hidden, input_shape=(self.t, self.d), 
                                  kernel_regularizer=self.kernel_regularizer,
                                  kernel_initializer=self.kernel_initializer))
         self.model.add(LeakyReLU(alpha=0.3))
@@ -557,7 +556,7 @@ class RecurrentEvent(RecurentLinearEvent):
 
 class GRUEvent(RecurentLinearEvent):
 
-    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
+    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, optimizer=None,
                  n_epochs=10, dropout=0.50, l2_regularization=0.00, batch_size=32,
                  kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0, reset_weights=False):
 
@@ -570,7 +569,6 @@ class GRUEvent(RecurentLinearEvent):
             self.n_hidden = d
         else:
             self.n_hidden = n_hidden
-        self.hidden_act = hidden_act
         self.dropout = dropout
 
         if init_model:
@@ -580,7 +578,7 @@ class GRUEvent(RecurentLinearEvent):
         self.model = Sequential()
         # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.d-dimensional vector
-        self.model.add(GRU(self.n_hidden, input_shape=(self.t, self.d), #activation=self.hidden_act,
+        self.model.add(GRU(self.n_hidden, input_shape=(self.t, self.d),
                                  kernel_regularizer=self.kernel_regularizer,
                                  kernel_initializer=self.kernel_initializer))
         self.model.add(LeakyReLU(alpha=0.3))
@@ -592,7 +590,7 @@ class GRUEvent(RecurentLinearEvent):
 
 class LSTMEvent(RecurentLinearEvent):
 
-    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, hidden_act='tanh', optimizer=None,
+    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, optimizer=None,
                  n_epochs=10, dropout=0.50, l2_regularization=0.00,
                  batch_size=32, kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0,
                  reset_weights=False):
@@ -606,7 +604,6 @@ class LSTMEvent(RecurentLinearEvent):
             self.n_hidden = d
         else:
             self.n_hidden = n_hidden
-        self.hidden_act = hidden_act
         self.dropout = dropout
 
         if init_model:
@@ -616,7 +613,7 @@ class LSTMEvent(RecurentLinearEvent):
         self.model = Sequential()
         # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.d-dimensional vector
-        self.model.add(LSTM(self.n_hidden, input_shape=(self.t, self.d), #activation=self.hidden_act,
+        self.model.add(LSTM(self.n_hidden, input_shape=(self.t, self.d),
                            kernel_regularizer=self.kernel_regularizer,
                            kernel_initializer=self.kernel_initializer))
         self.model.add(LeakyReLU(alpha=0.3))
