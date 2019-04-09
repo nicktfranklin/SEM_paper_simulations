@@ -197,7 +197,7 @@ def make_log_prob_prior(Z, df0, scale0):
 
 
 def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_permute=100,
-                 human_data_path=None, video_data_path=None,
+                 human_data_path=None, video_data_path=None, calc_prior_log_prob = True,
                  ):
 
     if video_data_path is None:
@@ -210,8 +210,10 @@ def seg_comp_new(f_class, f_opts, lmda=10 ** 5, alfa=10 ** -1, bin_size=1.0, n_p
     sax = np.load(video_data_path + 'video_color_Z_embedded_64.npy')[0:5537, :]
 
     # adjust the prior of a new cluster!
-    f_opts['prior_log_prob'] = make_log_prob_prior(sax, df0=f_opts['var_df0'], scale0=f_opts['var_scale0'])
-
+    if calc_prior_log_prob:
+        f_opts['prior_log_prob'] = make_log_prob_prior(sax, df0=f_opts['var_df0'], scale0=f_opts['var_scale0'])
+    print f_opts
+    
     # load the comparison data
     # experiment 1:
     data = pd.read_csv(human_data_path + 'zachs2006_data021011.dat', delimiter='\t')
@@ -471,11 +473,45 @@ def gru_only(df0=10, scale0=0.3, l2_regularization=0.0, dropout=0.5, t=3, output
     sys.stdout.write('\n')
 
 
+def scaled_gru_only(df0=1, scale0=0.84, l2_regularization=0.0, dropout=0.5, t=10, output_path=None,
+         output_id_tag=None, n_epochs=10, lmda=1.0, alfa=1.0,
+         bin_size=1.0, n_permute=100, comp_data_path=None, video_data_path=None,
+         reset_weights=False, f_prior=-0.29):
+
+    output_tag = '_df0_{}_scale0_{}_l2_{}_do_{}'.format(df0, scale0, l2_regularization, dropout)
+    if output_id_tag is not None:
+        output_tag += output_id_tag
+
+
+    kwargs = dict(lmda=lmda, alfa=alfa, bin_size=bin_size, n_permute=n_permute,
+                  human_data_path=comp_data_path, video_data_path=video_data_path, calc_prior_log_prob=False)
+
+    # ####### GRU #########
+    f_class = GRUEvent_scaled
+    optimizer_kwargs = dict(lr=0.003, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0, amsgrad=False)
+
+    f_opts=dict(var_df0=df0, var_scale0=scale0, 
+                l2_regularization=l2_regularization, 
+                dropout=dropout,
+                n_epochs=n_epochs, t=t,
+                prior_log_prob=f_prior,
+                batch_update=False,
+                batch_size=1,
+                optimizer_kwargs=optimizer_kwargs,
+            )
+
+    sys.stdout.write('Running GRU\n')
+    res = seg_comp_new(f_class, f_opts, **kwargs)
+    res['EventModel'] = ['GRU, scaled, online'] * len(res)
+    res.to_pickle(output_path + 'EventR2_GRU_scaled_online' + output_tag + '.pkl')
+    sys.stdout.write('\n')
+
+
 if __name__ == "__main__":
 
     output_path = './'
     video_data_path = './data/videodata/'
-    comp_data_file = './data/Zacks2006/'
+    comp_data_file = './data/'
     # video_data_path = './'
     # comp_data_file = './'
 
@@ -488,3 +524,13 @@ if __name__ == "__main__":
          output_path=output_path, comp_data_path=comp_data_file, video_data_path=video_data_path)
 
     # time_test(df0=10, scale0=0.9, l2_regularization=0.0, dropout=0.5, t=10, data_path=data_path)
+
+
+    # lmda = 1.0
+    # alfa = 1.0
+    #
+    # scaled_gru_only(df0=1, scale0=0.84, l2_regularization=0.0, dropout=0.5, t=10, n_epochs=10,
+    #      lmda=lmda, alfa=alfa,
+    #      output_id_tag="adam", #reset_weights=True,
+    #      output_path=output_path, comp_data_path=comp_data_file, video_data_path=video_data_path)
+    

@@ -190,7 +190,7 @@ class SEM(object):
         if not minimize_memory:
             post = np.zeros((n, self.k))
             pe = np.zeros(np.shape(x)[0])
-            y_hat = np.zeros(np.shape(x))
+            x_hat = np.zeros(np.shape(x))
             log_boundary_probability = np.zeros(np.shape(x)[0])
 
         # these are special case variables to deal with the possibility the current event is restarted
@@ -306,8 +306,8 @@ class SEM(object):
                 # prediction error: euclidean distance of the last model and the current scene vector
                 if ii > 0:
                     model = self.event_models[self.k_prev]
-                    y_hat[ii, :] = model.predict_next(self.x_prev)
-                    pe[ii] = np.linalg.norm(x_curr - y_hat[ii, :])
+                    x_hat[ii, :] = model.predict_next(self.x_prev)
+                    pe[ii] = np.linalg.norm(x_curr - x_hat[ii, :])
                     # surprise[ii] = log_like[ii, self.k_prev]
 
             self.c[k] += 1  # update counts
@@ -342,7 +342,7 @@ class SEM(object):
         self.results.log_like = log_like
         self.results.log_prior = log_prior
         self.results.e_hat = np.argmax(log_like + log_prior, axis=1)
-        self.results.y_hat = y_hat
+        self.results.x_hat = x_hat
         self.results.log_loss = logsumexp(log_like + log_prior, axis=1)
         self.results.log_boundary_probability = log_boundary_probability
         # # this is a debugging thing
@@ -351,16 +351,21 @@ class SEM(object):
 
         return post
 
-    def update_single_event(self, x, update=True):
+    def update_single_event(self, x, update=True, save_x_hat=False):
         """
 
         :param x: this is an n x d array of the n scenes in an event
         :param update: boolean (default True) update the prior and posterior of the event model
+        :param save_x_hat: boolean (default False) normally, we don't save this as the interpretation can be tricky
+        N.b: unlike the posterior calculation, this is done at the level of individual scenes within the
+        events (and not one per event)
         :return:
         """
         if update:
             self.k += 1
             self._update_state(x, self.k)
+
+            n_scene = np.shape(x)[0]
 
             # pull the relevant items from the results
             if self.results is None:
@@ -368,11 +373,17 @@ class SEM(object):
                 post = np.zeros((1, self.k))
                 log_like = np.zeros((1, self.k)) - np.inf
                 log_prior = np.zeros((1, self.k)) - np.inf
+                if save_x_hat:
+                    x_hat = np.zeros((n_scene, self.d))
+                    sigma = np.zeros((n_scene, self.d))
 
             else:
                 post = self.results.post
                 log_like = self.results.log_like
                 log_prior = self.results.log_prior
+                if save_x_hat:
+                    x_hat = self.results.x_hat
+                    sigma = self.results.sigma
 
                 # extend the size of the posterior, etc
 
@@ -387,6 +398,9 @@ class SEM(object):
                 post = np.concatenate([post, np.zeros((1, self.k))], axis=0)
                 log_like = np.concatenate([log_like, np.zeros((1, self.k)) - np.inf], axis=0)
                 log_prior = np.concatenate([log_prior, np.zeros((1, self.k)) - np.inf], axis=0)
+                if save_x_hat:
+                    x_hat = np.concatenate([x_hat, np.zeros((n_scene, self.d))], axis=0)
+                    sigma = np.concatenate([sigma, np.zeros((n_scene, self.d))], axis=0)
         else:
             log_like = np.zeros((1, self.k)) - np.inf
             log_prior = np.zeros((1, self.k)) - np.inf
@@ -396,13 +410,17 @@ class SEM(object):
 
         # likelihood
         active = np.nonzero(prior)[0]
-        lik = np.zeros((np.shape(x)[0], len(active)))
+        lik = np.zeros((n_scene, len(active)))
 
         # again, this is a readout of the model only and not used for updating,
         # but also keep track of the within event posterior
         map_prediction = np.zeros(np.shape(x))
         k_within_event = np.argmax(prior)  # prior to the first scene within an event having been observed, the
         # prior determines what the event type will be
+
+        if save_x_hat:
+            _x_hat = np.zeros((n_scene, self.d))  # temporary storre
+            _sigma = np.zeros((n_scene, self.d))
 
         for ii, x_curr in enumerate(x):
 
@@ -430,7 +448,7 @@ class SEM(object):
                 model = self.event_models[k0]
 
                 if not event_boundary:
-                    lik[ii, k0] = model.log_likelihood_sequence(x[:ii, :], x_curr)
+                    lik[ii, k0] = model.log_likelihood_sequence(x[:ii, :].reshape(-1, self.d), x_curr)
                 else:
                     lik[ii, k0] = model.log_likelihood_f0(x_curr)
 
@@ -443,6 +461,13 @@ class SEM(object):
             # a within event estimate of the event type (the real estimate is at the end of the event,
             # taking into account the accumulated evidence
             k_within_event = np.argmax(np.sum(lik[:ii+1, :len(active)], axis=0) + np.log(prior[:len(active)]))
+            if save_x_hat:
+                model = self.event_models[k_within_event]
+                _sigma[ii, :] = model.get_variance()
+                if ii > 0:
+                    _x_hat[ii, :] = model.predict_next_generative(x[:ii, :])
+                else:
+                    _x_hat[ii, :] = model.predict_f0()
 
         # cache the diagnostic measures
         log_like[-1, :len(active)] = np.sum(lik, axis=0)
@@ -459,7 +484,7 @@ class SEM(object):
             k = np.argmax(log_post)
 
             # update the prior
-            self.c[k] += np.shape(x)[0]
+            self.c[k] += n_scene
             # cache for next event
             self.k_prev = k
 
@@ -470,19 +495,24 @@ class SEM(object):
                 self.event_models[k].update(x_prev, X0)
                 x_prev = X0
 
-            # self.results = Results()
             self.results.post = post
             self.results.log_like = log_like
             self.results.log_prior = log_prior
             self.results.e_hat = np.argmax(post, axis=1)
             self.results.log_loss = logsumexp(log_like + log_prior, axis=1)
 
+            if save_x_hat:
+                x_hat[-n_scene:, :] = _x_hat
+                sigma[-n_scene:, :] = _sigma
+                self.results.x_hat = x_hat
+                self.results.sigma = sigma
+
         return bayesian_surprise, map_prediction
 
     def init_for_boundaries(self, list_events):
         # update internal state
 
-        k = len(list_events)
+        k = 0
         self._update_state(np.concatenate(list_events, axis=0), k)
         del k  # use self.k and self.d
 
@@ -497,7 +527,7 @@ class SEM(object):
 
             self.event_models[0] = new_model
 
-    def run_w_boundaries(self, list_events, progress_bar=True, leave_progress_bar=True):
+    def run_w_boundaries(self, list_events, progress_bar=True, leave_progress_bar=True, save_x_hat=False):
         """
         This method is the same as the above except the event boundaries are pre-specified by the experimenter
         as a list of event tokens (the event/schema type is still inferred).
@@ -519,6 +549,9 @@ class SEM(object):
         leave_progress_bar: bool
             leave the progress bar after completing?
 
+        save_x_hat: bool
+            save the MAP scene predictions?
+
         Return
         ------
         post: n_e by k array of posterior probabilities
@@ -536,7 +569,7 @@ class SEM(object):
         self.init_for_boundaries(list_events)
 
         for x in my_it(list_events):
-            self.update_single_event(x)
+            self.update_single_event(x, save_x_hat=save_x_hat)
 
     def clear_event_models(self):
         for e in self.event_models.itervalues():
@@ -545,3 +578,10 @@ class SEM(object):
         tf.reset_default_graph()  # for being sure
         K.clear_session()
 
+
+def clear_sem(sem_model):
+    """ This function deletes sem from memory"""
+    assert type(sem_model) == SEM
+    sem_model.clear_event_models()
+    sem_model.results = None
+    return None

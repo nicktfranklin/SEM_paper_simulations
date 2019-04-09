@@ -53,6 +53,11 @@ To deactivate the virtual environment, run
     source deactivate
 
 
+Note: if these instructions do not work for some reason, this library uses:
+    Tensorflow v1.9
+    Keras v2.2.0
+    Anaconda
+
 ##### Known issues:
 
 * Progress bars seem to have problems with this installation. 

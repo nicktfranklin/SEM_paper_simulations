@@ -4,14 +4,31 @@ from utils import unroll_data
 import keras
 from keras.models import Sequential
 from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM, LeakyReLU
+from keras.initializers import glorot_uniform  # Or your initializer of choice
 from keras import regularizers
-from keras.optimizers import Adam
-from scipy.stats import multivariate_normal
+from keras.optimizers import *
+from models.utils import fast_mvnorm_diagonal_logprob
 
 print("TensorFlow Version: {}".format(tf.__version__))
 print("Keras      Version: {}".format(keras.__version__))
 
-from keras.initializers import glorot_uniform  # Or your initializer of choice
+config = tf.ConfigProto()
+config.intra_op_parallelism_threads = 4
+config.inter_op_parallelism_threads = 4
+tf.Session(config=config)
+
+
+# run a check that tensorflow works on import
+def check_tf():
+    a = tf.constant([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], shape=[2, 3], name='a')
+    b = tf.constant([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], shape=[3, 2], name='b')
+    c = tf.matmul(a, b)
+
+    with tf.Session() as sess:
+        sess.run(c)
+    print "TensorFlow Check Passed"
+check_tf()
+
 
 
 def reset_weights(session, model):
@@ -46,40 +63,12 @@ def map_variance(samples, df0, scale0):
     return df * scale / (df * 2)
 
 
-def kalman_update(x, z, P, A, Q, R):
-    # time update steps
-    z_hat_pre = A.dot(z)
-    P_pre = A.dot(P).dot(A.T) + Q
-
-    # measurement updates
-    K = np.matmul(P_pre, np.linalg.inv(P_pre + R))
-    z_hat = z_hat_pre + np.matmul(K, x - z_hat_pre)
-    P = np.matmul((np.eye(np.shape(x)[0]) - K), P_pre)
-
-    return z_hat, P
-
-
-def kalman_prediction(z, A):
-    return A.dot(z)
-
-
-def kalman_log_prob(x, z, P, A, Q, R):
-    z_hat_pre = A.dot(z)
-    P_pre = A.dot(P).dot(A.T) + Q
-
-    # combined measurement noise into covariance
-    Sigma = np.linalg.inv(np.linalg.inv(P_pre) + np.linalg.inv(R))
-
-    # evaluate
-    return multivariate_normal.logpdf(x, mean=z_hat_pre, cov=Sigma)
-
-
 class LinearEvent(object):
     """ this is the base clase of the event model """
 
     def __init__(self, d, var_df0, var_scale0, optimizer=None, n_epochs=10, init_model=False,
                  kernel_initializer='glorot_uniform', l2_regularization=0.00, batch_size=32, prior_log_prob=0.0,
-                 reset_weights=False):
+                 reset_weights=False, batch_update=True, optimizer_kwargs=None):
         """
 
         :param d: dimensions of the input space
@@ -90,11 +79,14 @@ class LinearEvent(object):
         self.f0 = np.zeros(d)
 
         self.x_history = [np.zeros((0, self.d))]
-        # self.y_history = [np.zeros((0, self.d))]
         self.prior_probability = prior_log_prob
 
-        if optimizer is None:
-            optimizer = Adam(lr=0.01, beta_1=0.9, beta_2=0.999, epsilon=None, decay=0.0, amsgrad=False)
+        if (optimizer is None) and (optimizer_kwargs is None):
+            optimizer = Adam(lr=0.01, beta_1=0.9, beta_2=0.999, epsilon=1e-08, decay=0.0, amsgrad=False)
+        elif (optimizer is None) and not (optimizer_kwargs is None):
+            optimizer = Adam(**optimizer_kwargs)
+        elif (optimizer is not None) and (type(optimizer) != str):
+            optimizer = optimizer()
 
         self.compile_opts = dict(optimizer=optimizer, loss='mean_squared_error')
         self.kernel_initializer = kernel_initializer
@@ -105,12 +97,13 @@ class LinearEvent(object):
         self.var_scale0 = var_scale0
         self.d = d
         self.reset_weights = reset_weights
+        self.batch_update = batch_update
         self.training_pairs = []
         self.prediction_errors = np.zeros((0, self.d), dtype=np.float)
         self.model_weights = None
 
         # initialize the covariance with the mode of the prior distribution
-        self.Sigma = np.eye(d) * var_df0 * var_scale0 / (var_df0 + 2)
+        self.Sigma = np.ones(d) * var_df0 * var_scale0 / (var_df0 + 2)
 
         self.is_visited = False  # governs the special case of model's first prediction (i.e. with no experience)
 
@@ -145,7 +138,7 @@ class LinearEvent(object):
         reset_weights(self.sess, self.model)
         self.model_weights = self.model.get_weights()
 
-    def update(self, X, Y, update_estimate=True):
+    def update(self, X, Xp, update_estimate=True):
         """
         Parameters
         ----------
@@ -162,30 +155,33 @@ class LinearEvent(object):
             X = X[-1, :]  # only consider last example
         assert X.ndim == 1
         assert X.shape[0] == self.d
-        assert Y.ndim == 1
-        assert Y.shape[0] == self.d
+        assert Xp.ndim == 1
+        assert Xp.shape[0] == self.d
 
         x_example = X.reshape((1, self.d))
-        y_example = Y.reshape((1, self.d))
+        xp_example = Xp.reshape((1, self.d))
 
         # concatenate the training example to the active event token
         self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
-        # self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
 
         # also, create a list of training pairs (x, y) for efficient sampling
         #  picks  random time-point in the history
-        self.training_pairs.append(tuple([x_example, y_example]))
+        self.training_pairs.append(tuple([x_example, xp_example]))
 
         if update_estimate:
             self.estimate()
             self.f_is_trained = True
 
-    def update_f0(self, Y, update_estimate=True):
-        self.update(np.zeros(self.d), Y, update_estimate=update_estimate)
+    def update_f0(self, Xp, update_estimate=True):
+        self.update(np.zeros(self.d), Xp, update_estimate=update_estimate)
         self.f0_is_trained = True
 
         # precompute f0 for speed
         self.f0 = self._predict_f0()
+
+    def get_variance(self):
+        # Sigma is stored as a vector corresponding to the entries of the diagonal covariance matrix
+        return self.Sigma
 
     def predict_next(self, X):
         """
@@ -193,8 +189,6 @@ class LinearEvent(object):
         for untrained models (this is an initialization technique)
 
         """
-        self.model.set_weights(self.model_weights)
-
         if not self.f_is_trained:
             if np.ndim(X) > 1:
                 return np.copy(X[-1, :]).reshape(1, -1)
@@ -217,7 +211,8 @@ class LinearEvent(object):
             X0 = X[-1, :]
         else:
             X0 = X
-
+ 
+        self.model.set_weights(self.model_weights)
         return self.model.predict(np.reshape(X0, newshape=(1, self.d)))
 
     def predict_f0(self):
@@ -233,24 +228,24 @@ class LinearEvent(object):
     def _predict_f0(self):
         return self._predict_next(np.zeros(self.d))
 
-    def log_likelihood_f0(self, Y):
+    def log_likelihood_f0(self, Xp):
 
         if not self.f0_is_trained:
             return self.prior_probability
 
         # predict the initial point
-        Y_hat = self.predict_f0()
+        Xp_hat = self.predict_f0()
 
         # return the probability
-        return multivariate_normal.logpdf(Y.reshape(-1), mean=Y_hat.reshape(-1), cov=self.Sigma)
+        return fast_mvnorm_diagonal_logprob(Xp.reshape(-1) - Xp_hat.reshape(-1), self.Sigma)
 
-    def log_likelihood_next(self, X, Y):
-        Y_hat = self.predict_next(X)
-        return multivariate_normal.logpdf(Y.reshape(-1), mean=Y_hat.reshape(-1), cov=self.Sigma)
+    def log_likelihood_next(self, X, Xp):
+        Xp_hat = self.predict_next(X)
+        return fast_mvnorm_diagonal_logprob(Xp.reshape(-1) - Xp_hat.reshape(-1), self.Sigma)
 
-    def log_likelihood_sequence(self, X, Y):
-        Y_hat = self.predict_next_generative(X)
-        return multivariate_normal.logpdf(Y.reshape(-1), mean=Y_hat.reshape(-1), cov=self.Sigma)
+    def log_likelihood_sequence(self, X, Xp):
+        Xp_hat = self.predict_next_generative(X)
+        return fast_mvnorm_diagonal_logprob(Xp.reshape(-1) - Xp_hat.reshape(-1), self.Sigma)
 
     # create a new cluster of scenes
     def new_token(self):
@@ -258,13 +253,14 @@ class LinearEvent(object):
             # special case for the first cluster which is already created
             return
         self.x_history.append(np.zeros((0, self.d)))
-        # self.y_history.append(np.zeros((0, self.d)))
 
     def predict_next_generative(self, X):
+        self.model.set_weights(self.model_weights)
         # the LDS is a markov model, so these functions are the same
         return self.predict_next(X)
 
     def run_generative(self, n_steps, initial_point=None):
+        self.model.set_weights(self.model_weights)
         if initial_point is None:
             x_gen = self._predict_f0()
         else:
@@ -279,52 +275,59 @@ class LinearEvent(object):
         else:
             self.model.set_weights(self.model_weights)
 
-        # self.model.fit(self.x_train, self.y_train, epochs=self.n_epochs, verbose=0)
         n_pairs = len(self.training_pairs)
 
-        def draw_sample_pair():
-            # draw a random cluster for the history
-            idx = np.random.randint(n_pairs)
-            return self.training_pairs[idx]
+        if self.batch_update:
+            def draw_sample_pair():
+                # draw a random cluster for the history
+                idx = np.random.randint(n_pairs)
+                return self.training_pairs[idx]
+        else:
+            # for online sampling, just use the last training sample
+            def draw_sample_pair():
+                return self.training_pairs[-1]
 
         # run batch gradient descent on all of the past events!
         for _ in range(self.n_epochs):
 
             # draw a set of training examples from the history
             x_batch = []
-            y_batch = []
+            xp_batch = []
             for _ in range(self.batch_size):
 
-                x_sample, y_sample = draw_sample_pair()
+                x_sample, xp_sample = draw_sample_pair()
 
                 # these data aren't
                 x_batch.append(x_sample)
-                y_batch.append(y_sample)
+                xp_batch.append(xp_sample)
 
             x_batch = np.reshape(x_batch, (self.batch_size, self.d))
-            y_batch = np.reshape(y_batch, (self.batch_size, self.d))
-            self.model.train_on_batch(x_batch, y_batch)
+            xp_batch = np.reshape(xp_batch, (self.batch_size, self.d))
+            self.model.train_on_batch(x_batch, xp_batch)
 
         # cache the model weights
         self.model_weights = self.model.get_weights()
 
         # Update Sigma
-        x_train_0, y_train_0 = self.training_pairs[-1]
-        y_hat = self.model.predict(x_train_0)
-        self.prediction_errors = np.concatenate([self.prediction_errors, y_train_0 - y_hat], axis=0)
+        x_train_0, xp_train_0 = self.training_pairs[-1]
+        xp_hat = self.model.predict(x_train_0)
+        self.prediction_errors = np.concatenate([self.prediction_errors, xp_train_0 - xp_hat], axis=0)
         if np.shape(self.prediction_errors)[0] > 1:
-            self.Sigma = np.eye(self.d) * map_variance(self.prediction_errors, self.var_df0, self.var_scale0)
+            self.Sigma = map_variance(self.prediction_errors, self.var_df0, self.var_scale0)
 
 
 class NonLinearEvent(LinearEvent):
 
     def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh',
                  optimizer=None, n_epochs=10, init_model=False, kernel_initializer='glorot_uniform',
-                 l2_regularization=0.00, dropout=0.50, prior_log_prob=0.0, reset_weights=False):
+                 l2_regularization=0.00, dropout=0.50, prior_log_prob=0.0, reset_weights=False,
+                 batch_update=True,
+                 optimizer_kwargs=None):
         LinearEvent.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
                              init_model=False, kernel_initializer=kernel_initializer,
                              l2_regularization=l2_regularization, prior_log_prob=prior_log_prob,
-                             reset_weights=reset_weights)
+                             reset_weights=reset_weights, batch_update=batch_update,
+                             optimizer_kwargs=optimizer_kwargs)
 
         if n_hidden is None:
             n_hidden = d
@@ -372,7 +375,8 @@ class RecurentLinearEvent(LinearEvent):
 
     def __init__(self, d, var_df0, var_scale0, t=3,
                  optimizer=None, n_epochs=10, l2_regularization=0.00, batch_size=32,
-                 kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0, reset_weights=False):
+                 kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0, reset_weights=False,
+                 batch_update=True, optimizer_kwargs=None):
         #
         # D = dimension of single input / output example
         # t = number of time steps to unroll back in time for the recurrent layer
@@ -387,7 +391,7 @@ class RecurentLinearEvent(LinearEvent):
         LinearEvent.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
                              init_model=False, kernel_initializer=kernel_initializer,
                              l2_regularization=l2_regularization, prior_log_prob=prior_log_prob,
-                             reset_weights=reset_weights)
+                             reset_weights=reset_weights, batch_update=batch_update, optimizer_kwargs=optimizer_kwargs)
 
         self.t = t
         self.n_epochs = n_epochs
@@ -435,6 +439,7 @@ class RecurentLinearEvent(LinearEvent):
 
     # predict a single example
     def _predict_next(self, X):
+        self.model.set_weights(self.model_weights)
         # Note: this function predicts the next conditioned on the training data the model has seen
 
         if X.ndim > 1:
@@ -452,20 +457,19 @@ class RecurentLinearEvent(LinearEvent):
     def _predict_f0(self):
         return self.predict_next_generative(np.zeros(self.d))
 
-    def update(self, X, Y, update_estimate=True):
+    def update(self, X, Xp, update_estimate=True):
         if X.ndim > 1:
             X = X[-1, :]  # only consider last example
         assert X.ndim == 1
         assert X.shape[0] == self.d
-        assert Y.ndim == 1
-        assert Y.shape[0] == self.d
+        assert Xp.ndim == 1
+        assert Xp.shape[0] == self.d
 
         x_example = X.reshape((1, self.d))
-        y_example = Y.reshape((1, self.d))
+        xp_example = Xp.reshape((1, self.d))
 
         # concatenate the training example to the active event token
         self.x_history[-1] = np.concatenate([self.x_history[-1], x_example], axis=0)
-        # self.y_history[-1] = np.concatenate([self.y_history[-1], y_example], axis=0)
 
         # also, create a list of training pairs (x, y) for efficient sampling
         #  picks  random time-point in the history
@@ -473,13 +477,14 @@ class RecurentLinearEvent(LinearEvent):
         x_train_example = np.reshape(
                     unroll_data(self.x_history[-1][max(_n - self.t, 0):, :], self.t)[-1, :, :], (1, self.t, self.d)
                 )
-        self.training_pairs.append(tuple([x_train_example, y_example]))
+        self.training_pairs.append(tuple([x_train_example, xp_example]))
 
         if update_estimate:
             self.estimate()
             self.f_is_trained = True
 
     def predict_next_generative(self, X):
+        self.model.set_weights(self.model_weights)
         X0 = np.reshape(unroll_data(X, self.t)[-1, :, :], (1, self.t, self.d))
         return self.model.predict(X0)
 
@@ -487,48 +492,56 @@ class RecurentLinearEvent(LinearEvent):
     def estimate(self):
         if self.reset_weights:
             self.do_reset_weights()
+        else:
+            self.model.set_weights(self.model_weights)
 
         n_pairs = len(self.training_pairs)
 
-        def draw_sample_pair():
-            # draw a random cluster for the history
-            idx = np.random.randint(n_pairs)
-            return self.training_pairs[idx]
+        if self.batch_update:
+            def draw_sample_pair():
+                # draw a random cluster for the history
+                idx = np.random.randint(n_pairs)
+                return self.training_pairs[idx]
+        else:
+            # for online sampling, just use the last training sample
+            def draw_sample_pair():
+                return self.training_pairs[-1]
 
         # run batch gradient descent on all of the past events!
         for _ in range(self.n_epochs):
 
             # draw a set of training examples from the history
             x_batch = np.zeros((0, self.t, self.d))
-            y_batch = np.zeros((0, self.d))
+            xp_batch = np.zeros((0, self.d))
             for _ in range(self.batch_size):
 
-                x_sample, y_sample = draw_sample_pair()
+                x_sample, xp_sample = draw_sample_pair()
 
                 x_batch = np.concatenate([x_batch, x_sample], axis=0)
-                y_batch = np.concatenate([y_batch, y_sample], axis=0)
+                xp_batch = np.concatenate([xp_batch, xp_sample], axis=0)
 
-            self.model.train_on_batch(x_batch, y_batch)
+            self.model.train_on_batch(x_batch, xp_batch)
         self.model_weights = self.model.get_weights()
 
         # Update Sigma
-        x_train_0, y_train_0 = self.training_pairs[-1]
-        y_hat = self.model.predict(x_train_0)
-        self.prediction_errors = np.concatenate([self.prediction_errors, y_train_0 - y_hat], axis=0)
+        x_train_0, xp_train_0 = self.training_pairs[-1]
+        xp_hat = self.model.predict(x_train_0)
+        self.prediction_errors = np.concatenate([self.prediction_errors, xp_train_0 - xp_hat], axis=0)
         if np.shape(self.prediction_errors)[0] > 1:
-            self.Sigma = np.eye(self.d) * map_variance(self.prediction_errors, self.var_df0, self.var_scale0)
+            self.Sigma = map_variance(self.prediction_errors, self.var_df0, self.var_scale0)
 
 
 class RecurrentEvent(RecurentLinearEvent):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, optimizer=None,
                  n_epochs=10, dropout=0.50, l2_regularization=0.00, batch_size=32,
-                 kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0, reset_weights=False):
+                 kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0, reset_weights=False, 
+                 batch_update=True, optimizer_kwargs=None):
 
         RecurentLinearEvent.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
                                      l2_regularization=l2_regularization, batch_size=batch_size,
                                      kernel_initializer=kernel_initializer, init_model=False, prior_log_prob=prior_log_prob,
-                                     reset_weights=reset_weights)
+                                     reset_weights=reset_weights, batch_update=batch_update, optimizer_kwargs=optimizer_kwargs)
 
         if n_hidden is None:
             self.n_hidden = d
@@ -543,7 +556,7 @@ class RecurrentEvent(RecurentLinearEvent):
         self.model = Sequential()
         # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.d-dimensional vector
-        self.model.add(SimpleRNN(self.n_hidden, input_shape=(self.t, self.d), 
+        self.model.add(SimpleRNN(self.n_hidden, input_shape=(self.t, self.d),
                                  kernel_regularizer=self.kernel_regularizer,
                                  kernel_initializer=self.kernel_initializer))
         self.model.add(LeakyReLU(alpha=0.3))
@@ -558,12 +571,14 @@ class GRUEvent(RecurentLinearEvent):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, optimizer=None,
                  n_epochs=10, dropout=0.50, l2_regularization=0.00, batch_size=32,
-                 kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0, reset_weights=False):
+                 kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0, reset_weights=False,
+                 batch_update=True, optimizer_kwargs=None):
 
         RecurentLinearEvent.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
                                      l2_regularization=l2_regularization, batch_size=batch_size,
                                      kernel_initializer=kernel_initializer, init_model=False,
-                                     prior_log_prob=prior_log_prob, reset_weights=reset_weights)
+                                     prior_log_prob=prior_log_prob, reset_weights=reset_weights,
+                                     batch_update=batch_update, optimizer_kwargs=optimizer_kwargs)
 
         if n_hidden is None:
             self.n_hidden = d
@@ -588,17 +603,41 @@ class GRUEvent(RecurentLinearEvent):
         self.model.compile(**self.compile_opts)
 
 
+class GRUEvent_scaled(GRUEvent):
+
+    def log_likelihood_f0(self, Xp):
+
+        if not self.f0_is_trained:
+            return self.prior_probability
+
+        # predict the initial point
+        Xp_hat = self.predict_f0()
+
+        # return the probability
+        # this is now the geometric mean of each feature's likelihood
+        return fast_mvnorm_diagonal_logprob(Xp.reshape(-1) - Xp_hat.reshape(-1), self.Sigma ** 0.5) / self.d
+
+    def log_likelihood_next(self, X, Xp):
+        # this is now the geometric mean of each feature's likelihood
+        return super(GRUEvent_scaled, self).log_likelihood_next(X, Xp) / self.d
+
+    def log_likelihood_sequence(self, X, Xp):
+        # this is now the geometric mean of each feature's likelihood
+        return super(GRUEvent_scaled, self).log_likelihood_sequence(X, Xp) / self.d
+
+
 class LSTMEvent(RecurentLinearEvent):
 
     def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, optimizer=None,
                  n_epochs=10, dropout=0.50, l2_regularization=0.00,
                  batch_size=32, kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0,
-                 reset_weights=False):
+                 reset_weights=False, batch_update=True, optimizer_kwargs=None):
 
         RecurentLinearEvent.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
                                      l2_regularization=l2_regularization, batch_size=batch_size,
                                      kernel_initializer=kernel_initializer, init_model=False,
-                                     prior_log_prob=prior_log_prob, reset_weights=reset_weights)
+                                     prior_log_prob=prior_log_prob, reset_weights=reset_weights,
+                                     batch_update=batch_update, optimizer_kwargs=optimizer_kwargs)
 
         if n_hidden is None:
             self.n_hidden = d
@@ -611,7 +650,7 @@ class LSTMEvent(RecurentLinearEvent):
 
     def _compile_model(self):
         self.model = Sequential()
-        # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
+        # input_shape[0] = time-steps; we pass the last self.t examples for train the hidden layer
         # input_shape[1] = input_dim; each example is a self.d-dimensional vector
         self.model.add(LSTM(self.n_hidden, input_shape=(self.t, self.d),
                            kernel_regularizer=self.kernel_regularizer,

@@ -2,19 +2,120 @@ import numpy as np
 from tqdm import tqdm
 from scipy.stats import multivariate_normal as mvnorm
 from scipy.special import logsumexp
-
+from models.utils import fast_mvnorm_diagonal_logprob
+np.seterr(divide = 'ignore')
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+import multiprocessing
 
 def sample_pmf(pmf):
     return np.sum(np.cumsum(pmf) < np.random.uniform(0, 1))
 
+def get_scrp_prob(e, lmda, alfa):
+    """
+    this function isn't used
+
+    :param e: list event labels
+    :param lmda: float, sCRP lambda
+    :param alpha: float, sCRP alpha
+    
+    :return: total log likelihood of sequence under sCRP
+    """
+    c = {e0: 0 for e0 in set(e)}
+    log_prob = 0
+    e0_prev = None
+    
+    Z = alfa
+    log_alfa = np.log(alfa)
+    for e0 in e:
+        
+        l = lmda * (e0 == e0_prev)
+        
+        if c[e0] == 0:
+            log_prob += log_alfa - np.log(Z + l)
+        else:
+            log_prob += np.log(c[e0] + l) - np.log(Z + l)
+            
+
+        # update the counts
+        c[e0] += 1
+        Z += 1
+        e0_prev = e0
+        
+    return log_prob
+
+def reconstruction_accuracy(y_samples, y_mem):
+    """
+    
+    :param:     y_samples - list of y_samples
+    :param:     y_mem - original corrupted memory trace
+
+    :return:    item_accuracy, list of probabilities each item in original memory 
+                is in the final reconstruction
+    """
+
+
+    acc = []
+    n_orig = len(y_mem)
+
+    for y_sample in y_samples:
+
+        def item_acc(t):
+            return np.float(any([all(yt[0] == y_mem[t][0]) for yt in y_sample if yt != None]))
+
+        # evaluate the accuracy for all of the items in the set
+        acc.append([item_acc(t) for t in range(n_orig)])
+
+    # return the vector of accuracy
+    return np.mean(acc, axis=0)
+
+def evaluate_seg(e_samples, e_true):
+    acc = []
+    for e in e_samples:
+        acc.append(np.mean(np.array(e) == e_true))
+    return np.mean(acc)
+    
+def create_corrupted_trace(x, e, tau, epsilon_e, b):
+    """
+    create a corrupted memory trace from feature vectors and event labels
+
+    :param x:           np.array of size nXd, featur vectors
+    :param e:           np.array of length n, event labels
+    :param tau:         float, feature corruption
+    :param epsilon_e:   float, event label corrruption
+    :param b:           int, time index corruption
+
+    :return y_mem: list of corrupted memory tuples:
+    """
+
+    n, d = x.shape
+
+    # create the corrupted memory trace
+    y_mem = list()  # these are list, not sets, for hashability
+
+    for t in range(n):
+        x_mem = x[t, :] + np.random.normal(scale=tau ** 0.5, size=d) # note, built in function uses stdev, not variance 
+        e_mem = [None, e[t]][np.random.rand() < epsilon_e]
+        t_mem = t + np.random.randint(-b, b + 1)
+        y_mem.append([x_mem, e_mem, t_mem])
+        
+    return y_mem
 
 def init_y_sample(y_mem, b, epsilon):
-    y_sample = [None] * len(y_mem)
+    """
+    :param y_mem: list of corrupted memory traces
+    :param b: time corruption noise
+    :param epsilon: "forgetting" parameter 
+    :returns: sample of y_mem
+    """
+    n_t = len(y_mem)
+    y_sample = [None] * n_t
 
     # create a copy of y_mem for sampling without replacement
     y_mem_copy = [[x_i.copy(), e_i, t_mem] for (x_i, e_i, t_mem) in y_mem]
 
-    for t in np.random.permutation(range(len(y_mem))):
+    # loop through timepoints in a random order
+    for t in np.random.permutation(range(n_t)):
 
         # create a probability function over the sample sets
         log_p = np.zeros(len(y_mem_copy) + 1) - np.inf
@@ -39,7 +140,7 @@ def init_x_sample_cond_y(y_sample, n, d, tau):
 
     for ii, y_ii in enumerate(y_sample):
         if y_ii is not None:
-            x_sample[ii, :] = np.random.randn(1, d) * tau + y_ii[0]
+            x_sample[ii, :] = y_ii[0]
     return x_sample
 
 
@@ -53,13 +154,17 @@ def sample_y_given_x_e(y_mem, x, e, b, tau, epsilon):
     # create a copy of y_mem for sampling without replacement
     y_mem_copy = [[x_i.copy(), e_i, t_mem] for (x_i, e_i, t_mem) in y_mem]
 
+    _ones = np.ones(d)
+
     for t in np.random.permutation(range(n)):
 
         # create a probability function over the sample sets
         log_p = np.zeros(len(y_mem_copy) + 1) - np.inf
         for ii, (x_i, e_i, t_mem) in enumerate(y_mem_copy):
             if np.abs(t_mem - t) <= b:
-                log_p[ii] = mvnorm.logpdf(x_i, mean=x[t, :], cov=np.eye(d) * tau)
+                # because we alwasy assume the covariance function is diagonal, we can use the
+                # univariate normal to speed up the calculations
+                log_p[ii] = fast_mvnorm_diagonal_logprob(x_i.reshape(-1) - x[t, :].reshape(-1), _ones * tau)
 
             # set probability to zero if event token doesn't match
             if e_i is not None:
@@ -102,7 +207,7 @@ def sample_e_given_x_y(x, y, event_models, alpha, lmda):
         if (y[t] is not None) and (y[t][1] is not None):
             e_sample[t] = y[t][1]
             e_prev = e_sample[t]
-            continue
+            c[e_sample[t]] += 1
         else:
 
             # calculate the CRP prior
@@ -110,11 +215,9 @@ def sample_e_given_x_y(x, y, event_models, alpha, lmda):
             if e_prev is not None:
                 p_sCRP[e_prev] += lmda
 
-            # add the alpha value to the first unvisited cluster
-            # (using argmax to get the first non-zero element)
+            # add the alpha value to the unvisited clusters
             if any(p_sCRP == 0):
-                idx = np.argmax(p_sCRP == 0)
-                p_sCRP[idx] = alpha
+                p_sCRP[p_sCRP == 0] = alpha / np.sum(p_sCRP == 0)
             # no need to normalize yet
 
             # calculate the probability of x_t|x_{1:t-1}
@@ -124,7 +227,9 @@ def sample_e_given_x_y(x, y, event_models, alpha, lmda):
                     x_t_hat = e_model.predict_next_generative(x_current)
                 else:
                     x_t_hat = e_model.predict_f0()
-                p_model[idx] = mvnorm.logpdf(x[t, :], mean=x_t_hat.reshape(-1), cov=e_model.Sigma)
+                # because we alwasy assume the covariance function is diagonal, we can use the
+                # univariate normal to speed up the calculations
+                p_model[idx] = fast_mvnorm_diagonal_logprob(x[t, :] - x_t_hat.reshape(-1), e_model.Sigma)
 
             log_p = p_model + np.log(p_sCRP)
             log_p -= logsumexp(log_p)
@@ -170,6 +275,9 @@ def sample_x_given_y_e(x_hat, y, e, event_models, tau):
 
     x_hat = x_hat.copy()  # don't want to overwrite the thing outside the loop...
 
+    # Note: this a filtering operation as the backwards pass is computationally difficult. 
+    # (by this, we mean that sampling from  Pr(x_t| x_{t+1:n}, x_{1:t-1}, theta, e, y_mem) is intractable
+    # and we thus only sample from Pr(x_t|, x_{1:t-1}, theta, e, y_mem), which is is Gaussian)
     for t in np.random.permutation(range(n)):
         # pull the active event model
         e_model = event_models[e[t]]
@@ -186,22 +294,40 @@ def sample_x_given_y_e(x_hat, y, e, event_models, tau):
         # is y_t a null tag?
         if y[t] is None:
             x_bar = f_x
-            Sigma = e_model.Sigma
+            sigmas = e_model.Sigma
         else:
             # calculate noise lambda for each event model
-            u_weight = (1. / np.diag(e_model.Sigma)) / (1. / np.diag(e_model.Sigma) + 1. / tau)
+            u_weight = (1. / e_model.Sigma) / (1. / e_model.Sigma + 1. / tau)
 
             x_bar = u_weight * f_x + (1 - u_weight) * y[t][0]
-            Sigma = np.eye(d) * 1. / (1. / np.diag(e_model.Sigma) + 1. / tau)
+            sigmas = 1. / (1. / e_model.Sigma + 1. / tau)
 
-        # draw a new sample of x_t
-        x_hat[t, :] = mvnorm.rvs(mean=x_bar.reshape(-1), cov=Sigma)
+        # draw a new sample of x_t 
+        # N.B. Handcoding a function to draw random variables introduced error into the algorithm
+        # and didn't save _any_ time.
+        x_hat[t, :] = mvnorm.rvs(mean=x_bar.reshape(-1), cov=np.diag(sigmas))
 
     return x_hat
 
 
-def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon, b, tau,
-                         n_samples=100, n_burnin=250, progress_bar=True, leave_progress_bar=True):
+def gibbs_memory_sampler(y_mem, sem_model, memory_alpha, memory_lambda, memory_epsilon, b, tau,
+                         n_samples=250, n_burnin=100, progress_bar=True, leave_progress_bar=True):
+    """
+
+    :param y_mem: list of 3-tuples (x_mem, e_mem, t_mem), corrupted memory trace
+    :param sem_mdoel: trained SEM instance
+    :param memory_alpha: SEM alpha parameter to use in reconstruction
+    :param memory_labmda: SEM lmbda parameter to use in reconstruction
+    :param memory_epsilon: (float) parameter controlling propensity to include null trace in reconstruction
+    :param b: (int) time index corruption noise
+    :param tau: (float, greater than zero) feature vector corruption noise
+    :param n_burnin: (int, default 100) number of Gibbs sampling itterations to burn in
+    :param n_samples: (int, default 250) number of Gibbs sampling itterations to collect
+    :param progress_bar: (bool) use progress bar for sampling?
+    :param leave_progress_bar: (bool, default=True) leave the progress bar at the end? 
+
+    :return: y_samples, e_samples, x_samples - Gibbs samples
+    """
 
     d = np.shape(y_mem[0][0])[0]
     n = len(y_mem)
@@ -213,7 +339,7 @@ def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon
 
     y_sample = init_y_sample(y_mem, b, memory_epsilon)
     x_sample = init_x_sample_cond_y(y_sample, n, d, tau)
-    e_sample = sample_e_given_x_y(x_sample, y_sample, sem.event_models, memory_alpha, memory_lambda)
+    e_sample = sample_e_given_x_y(x_sample, y_sample, sem_model.event_models, memory_alpha, memory_lambda)
 
     # loop through the other events in the list
     if progress_bar:
@@ -222,14 +348,14 @@ def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon
     else:
         def my_it(iterator):
             return iterator
-
+    
     for ii in my_it(range(n_burnin + n_samples)):
 
         # sample the memory features
-        x_sample = sample_x_given_y_e(x_sample, y_sample, e_sample, sem.event_models, tau)
+        x_sample = sample_x_given_y_e(x_sample, y_sample, e_sample, sem_model.event_models, tau)
 
         # sample the event models
-        e_sample = sample_e_given_x_y(x_sample, y_sample, sem.event_models, memory_alpha, memory_lambda)
+        e_sample = sample_e_given_x_y(x_sample, y_sample, sem_model.event_models, memory_alpha, memory_lambda)
 
         # sample the memory traces
         y_sample = sample_y_given_x_e(y_mem, x_sample, e_sample, b, tau, memory_epsilon)
@@ -242,38 +368,33 @@ def gibbs_memory_sampler(y_mem, sem, memory_alpha, memory_lambda, memory_epsilon
     return y_samples, e_samples, x_samples
 
 
-def gibbs_memory_sampler_given_e(y_mem, sem, e_true, memory_epsilon, b, tau,
-                         n_samples=100, n_burnin=250, progress_bar=True, leave_progress_bar=True):
+def multichain_gibbs(y_mem, sem_model, memory_alpha, memory_lambda, memory_epsilon, b, tau, n_chains=2,
+                         n_samples=250, n_burnin=50, progress_bar=True, leave_progress_bar=True):
 
-    d = np.shape(y_mem[0][0])[0]
-    n = len(y_mem)
+    """
 
-    #
-    y_samples = [None] * n_samples
-    x_samples = [None] * n_samples
+    :param y_mem: list of 3-tuples (x_mem, e_mem, t_mem), corrupted memory trace
+    :param sem_mdoel: trained SEM instance
+    :param memory_alpha: SEM alpha parameter to use in reconstruction
+    :param memory_labmda: SEM lmbda parameter to use in reconstruction
+    :param memory_epsilon: (float) parameter controlling propensity to include null trace in reconstruction
+    :param b: (int) time index corruption noise
+    :param tau: (float, greater than zero) feature vector corruption noise
+    :param n_burnin: (int, default 100) number of Gibbs sampling itterations to burn in
+    :param n_samples: (int, default 250) number of Gibbs sampling itterations to collect
+    :param progress_bar: (bool) use progress bar for sampling?
+    :param leave_progress_bar: (bool, default=True) leave the progress bar at the end? 
 
-    y_sample = init_y_sample(y_mem, b, memory_epsilon)
-    x_sample = init_x_sample_cond_y(y_sample, n, d, tau)
+    :return: y_samples, e_samples, x_samples - Gibbs samples
+    """
 
-    # loop through the other events in the list
-    if progress_bar:
-        def my_it(iterator):
-            return tqdm(iterator, desc='Gibbs Sampler', leave=leave_progress_bar)
-    else:
-        def my_it(iterator):
-            return iterator
-
-    for ii in my_it(range(n_burnin + n_samples)):
-
-        # sample the memory features
-        x_sample = sample_x_given_y_e(x_sample, y_sample, e_true, sem.event_models, tau)
-
-        # sample the memory traces
-        y_sample = sample_y_given_x_e(y_mem, x_sample, e_true, b, tau, memory_epsilon)
-
-        if ii >= n_burnin:
-            y_samples[ii - n_burnin] = y_sample
-            x_samples[ii - n_burnin] = x_sample
-
-    return y_samples, x_samples
-
+    y_samples, e_samples, x_samples = [], [], []
+    for _ in range(n_chains):
+        _y0, _e0, _x0 = gibbs_memory_sampler(
+            y_mem, sem_model, memory_alpha, memory_lambda, memory_epsilon, 
+            b, tau, n_samples, progress_bar, False, leave_progress_bar
+            )
+        y_samples += _y0
+        e_samples += _e0
+        x_samples += _x0
+    return y_samples, e_samples, x_samples

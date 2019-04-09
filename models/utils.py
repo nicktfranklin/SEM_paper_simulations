@@ -35,3 +35,27 @@ def unroll_data(x, t=1):
         x_unrolled[ii, :, :] = data_set[ii: ii + t, :]
 
     return x_unrolled
+
+# precompute for speed (doesn't really help but whatever)
+log_2pi = np.log(2.0 * np.pi)
+
+def fast_mvnorm_diagonal_logprob(x, variances):
+    """
+    Assumes a zero-mean mulitivariate normal with a diagonal covariance function
+
+    Parameters:
+
+        x: array, shape (D,)
+            observations
+
+        variances: array, shape (D,)
+            Diagonal values of the covariance function
+
+    output
+    ------
+
+        log-probability: float
+
+    """
+    return -0.5 * (log_2pi * np.shape(x)[0] + np.sum(np.log(variances) + (x**2) / variances ))
+    
