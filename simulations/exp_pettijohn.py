@@ -3,7 +3,7 @@ import pandas as pd
 from models.sem import SEM, clear_sem
 from sklearn.metrics import adjusted_rand_score
 from models.memory import reconstruction_accuracy, evaluate_seg
-from models.memory import multichain_gibbs as gibbs_memory_sampler
+from models.memory import gibbs_memory_sampler
 
 
 def generate_task(n=20, d=25):
@@ -63,7 +63,7 @@ def batch(sem_kwargs, gibbs_kwargs, epsilon_e, batch_number=0):
 
     for t in range(n):
         # n.b. python uses stdev, not var
-        x_mem = x_list_switch[t / 10][t % 10, :] + np.random.normal(scale=gibbs_kwargs['tau'] ** 0.5, size=d) 
+        x_mem = x_list_switch[t / 10][t % 10, :] + np.random.normal(scale=gibbs_kwargs['tau'] ** 0.5, size=d)
         e_mem = [None, sem_switch.event_models.keys()[t / (n / 2)]][np.random.rand() < epsilon_e]
         t_mem = t + np.random.randint(-gibbs_kwargs['b'], gibbs_kwargs['b'] + 1)
         y_mem_switch.append([x_mem, e_mem, t_mem])

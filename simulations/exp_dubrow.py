@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 from models import SEM, clear_sem
 from models.memory import evaluate_seg
-from models.memory import multichain_gibbs as gibbs_memory_sampler
+from models.memory import gibbs_memory_sampler
 from tqdm import tqdm
 from sklearn.metrics import adjusted_rand_score
 import sys
@@ -121,7 +121,7 @@ def run_block(sem_kwargs, gibbs_kwargs, epsilon_e, block_number=0):
 
     for t in range(n):
         # n.b. python uses stdev, not var
-        x_mem = np.concatenate(x_list_items)[t, :] + np.random.normal(scale= gibbs_kwargs['tau'] ** 0.5, size=d) 
+        x_mem = np.concatenate(x_list_items)[t, :] + np.random.normal(scale= gibbs_kwargs['tau'] ** 0.5, size=d)
         e_mem = [None, e_seg[t]][np.random.rand() < epsilon_e]
         t_mem = t + np.random.randint(-gibbs_kwargs['b'], gibbs_kwargs['b'] + 1)
         y_mem.append([x_mem, e_mem, t_mem])

@@ -351,7 +351,7 @@ class SEM(object):
 
         return post
 
-    def update_single_event(self, x, update=True, save_x_hat=False):
+    def update_single_event(self, x, update=True, save_x_hat=False, generative_predicitons=False):
         """
 
         :param x: this is an n x d array of the n scenes in an event
@@ -376,6 +376,8 @@ class SEM(object):
                 if save_x_hat:
                     x_hat = np.zeros((n_scene, self.d))
                     sigma = np.zeros((n_scene, self.d))
+                if generative_predicitons:
+                    x_hat_gen = np.zeros((n_scene, self.d))
 
             else:
                 post = self.results.post
@@ -384,6 +386,8 @@ class SEM(object):
                 if save_x_hat:
                     x_hat = self.results.x_hat
                     sigma = self.results.sigma
+                if generative_predicitons:
+                    x_hat_gen = self.results.x_hat_gen
 
                 # extend the size of the posterior, etc
 
@@ -401,6 +405,9 @@ class SEM(object):
                 if save_x_hat:
                     x_hat = np.concatenate([x_hat, np.zeros((n_scene, self.d))], axis=0)
                     sigma = np.concatenate([sigma, np.zeros((n_scene, self.d))], axis=0)
+
+                if generative_predicitons:
+                    x_hat_gen = np.concatenate([x_hat_gen, np.zeros((n_scene, self.d))], axis=0)
         else:
             log_like = np.zeros((1, self.k)) - np.inf
             log_prior = np.zeros((1, self.k)) - np.inf
@@ -421,6 +428,9 @@ class SEM(object):
         if save_x_hat:
             _x_hat = np.zeros((n_scene, self.d))  # temporary storre
             _sigma = np.zeros((n_scene, self.d))
+
+        if generative_predicitons:
+            _x_hat_gen = np.zeros((n_scene, self.d)) 
 
         for ii, x_curr in enumerate(x):
 
@@ -469,9 +479,19 @@ class SEM(object):
                 else:
                     _x_hat[ii, :] = model.predict_f0()
 
+            if ii == 1 and generative_predicitons:
+                # create a generative prediction of the model, conditioned on the first experienced scene
+                # for now, this is code specific to silvy's simluations
+                model = self.event_models[k_within_event]
+                _x_hat_gen[0, :] = x[0, :]
+                _x_hat_gen[1, :] = x[1, :]
+                for jj in range(2, n_scene):
+                    _x_hat_gen[jj, :] = model.predict_next_generative(x[:jj, :])
+
+
         # cache the diagnostic measures
         log_like[-1, :len(active)] = np.sum(lik, axis=0)
-        log_prior[-1, :len(active)] = np.log(prior[:len(active)])
+        log_prior[-1, :len(active)+1] = np.log(prior[:len(active)+1])
 
         # calculate surprise
         bayesian_surprise = logsumexp(lik + np.tile(log_prior[-1, :len(active)], (np.shape(lik)[0], 1)), axis=1)
@@ -507,6 +527,10 @@ class SEM(object):
                 self.results.x_hat = x_hat
                 self.results.sigma = sigma
 
+            if generative_predicitons:
+                x_hat_gen[-n_scene:, :] = _x_hat_gen
+                self.results.x_hat_gen = x_hat_gen
+
         return bayesian_surprise, map_prediction
 
     def init_for_boundaries(self, list_events):
@@ -527,7 +551,8 @@ class SEM(object):
 
             self.event_models[0] = new_model
 
-    def run_w_boundaries(self, list_events, progress_bar=True, leave_progress_bar=True, save_x_hat=False):
+    def run_w_boundaries(self, list_events, progress_bar=True, leave_progress_bar=True, save_x_hat=False, 
+                         generative_predicitons=False):
         """
         This method is the same as the above except the event boundaries are pre-specified by the experimenter
         as a list of event tokens (the event/schema type is still inferred).
@@ -569,7 +594,7 @@ class SEM(object):
         self.init_for_boundaries(list_events)
 
         for x in my_it(list_events):
-            self.update_single_event(x, save_x_hat=save_x_hat)
+            self.update_single_event(x, save_x_hat=save_x_hat, generative_predicitons=generative_predicitons)
 
     def clear_event_models(self):
         for e in self.event_models.itervalues():
@@ -577,6 +602,7 @@ class SEM(object):
         self.event_models = None
         tf.reset_default_graph()  # for being sure
         K.clear_session()
+
 
 
 def clear_sem(sem_model):

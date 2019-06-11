@@ -6,7 +6,7 @@ sys.path.append('../')
 from opt import encode
 import pandas as pd
 from models.memory import reconstruction_accuracy, evaluate_seg
-from models.memory import multichain_gibbs as gibbs_memory_sampler
+from models.memory import gibbs_memory_sampler
 from scipy.special import logsumexp
 from sklearn.preprocessing import normalize
 from models.sem import clear_sem, SEM

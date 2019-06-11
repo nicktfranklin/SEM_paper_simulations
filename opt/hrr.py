@@ -1,6 +1,19 @@
 import numpy as np
 from sklearn.preprocessing import normalize
 
+
+def embed_gaussian(d, n=1):
+    """
+    returns n normal vectors with variance = 1/n, inline with Plate's caluclations
+
+    :param d: (int), dimensions of the embedding
+    :param n: (int, default=1), number of embeddings to return
+
+    :return: d-length np.array
+    """
+    return np.random.normal(loc=0., scale=1./np.sqrt(d), size=(n, d))
+
+
 def conv_circ(signal, kernal, n=None):
     '''
     Parameters

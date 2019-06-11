@@ -3,7 +3,7 @@ import numpy as np
 from utils import unroll_data
 import keras
 from keras.models import Sequential
-from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM, LeakyReLU
+from keras.layers import Dense, Activation, SimpleRNN, GRU, Dropout, LSTM, LeakyReLU, Lambda
 from keras.initializers import glorot_uniform  # Or your initializer of choice
 from keras import regularizers
 from keras.optimizers import *
@@ -240,10 +240,16 @@ class LinearEvent(object):
         return fast_mvnorm_diagonal_logprob(Xp.reshape(-1) - Xp_hat.reshape(-1), self.Sigma)
 
     def log_likelihood_next(self, X, Xp):
+        if not self.f_is_trained:
+            return self.prior_probability
+
         Xp_hat = self.predict_next(X)
         return fast_mvnorm_diagonal_logprob(Xp.reshape(-1) - Xp_hat.reshape(-1), self.Sigma)
 
     def log_likelihood_sequence(self, X, Xp):
+        if not self.f_is_trained:
+            return self.prior_probability
+
         Xp_hat = self.predict_next_generative(X)
         return fast_mvnorm_diagonal_logprob(Xp.reshape(-1) - Xp_hat.reshape(-1), self.Sigma)
 
@@ -318,13 +324,13 @@ class LinearEvent(object):
 
 class NonLinearEvent(LinearEvent):
 
-    def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh',
+    def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh', batch_size=32,
                  optimizer=None, n_epochs=10, init_model=False, kernel_initializer='glorot_uniform',
                  l2_regularization=0.00, dropout=0.50, prior_log_prob=0.0, reset_weights=False,
                  batch_update=True,
                  optimizer_kwargs=None):
         LinearEvent.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
-                             init_model=False, kernel_initializer=kernel_initializer,
+                             init_model=False, kernel_initializer=kernel_initializer, batch_size=batch_size,
                              l2_regularization=l2_regularization, prior_log_prob=prior_log_prob,
                              reset_weights=reset_weights, batch_update=batch_update,
                              optimizer_kwargs=optimizer_kwargs)
@@ -347,6 +353,41 @@ class NonLinearEvent(LinearEvent):
         self.model.add(Dense(self.d, activation='linear',
                              kernel_regularizer=self.kernel_regularizer,
                              kernel_initializer=self.kernel_initializer))
+        self.model.compile(**self.compile_opts)
+
+
+class NonLinearEvent_normed(NonLinearEvent):
+
+    def __init__(self, d, var_df0, var_scale0, n_hidden=None, hidden_act='tanh',
+                 optimizer=None, n_epochs=10, init_model=False, kernel_initializer='glorot_uniform',
+                 l2_regularization=0.00, dropout=0.50, prior_log_prob=0.0, reset_weights=False, batch_size=32,
+                 batch_update=True, optimizer_kwargs=None):
+
+        NonLinearEvent.__init__(self, d, var_df0, var_scale0, optimizer=optimizer, n_epochs=n_epochs,
+                                     l2_regularization=l2_regularization,batch_size=batch_size,
+                                     kernel_initializer=kernel_initializer, init_model=False,
+                                     prior_log_prob=prior_log_prob, reset_weights=reset_weights,
+                                     batch_update=batch_update, optimizer_kwargs=optimizer_kwargs)
+
+        if n_hidden is None:
+            n_hidden = d
+        self.n_hidden = n_hidden
+        self.hidden_act = hidden_act
+        self.dropout = dropout
+
+        if init_model:
+            self.init_model()
+
+    def _compile_model(self):
+        self.model = Sequential()
+        self.model.add(Dense(self.n_hidden, input_shape=(self.d,), activation=self.hidden_act,
+                             kernel_regularizer=self.kernel_regularizer,
+                             kernel_initializer=self.kernel_initializer))
+        self.model.add(Dropout(self.dropout))
+        self.model.add(Dense(self.d, activation='linear',
+                             kernel_regularizer=self.kernel_regularizer,
+                             kernel_initializer=self.kernel_initializer))
+        self.model.add(Lambda(lambda x: K.l2_normalize(x, axis=-1)))  
         self.model.compile(**self.compile_opts)
 
 
@@ -457,6 +498,10 @@ class RecurentLinearEvent(LinearEvent):
     def _predict_f0(self):
         return self.predict_next_generative(np.zeros(self.d))
 
+    def _update_variance(self):
+        if np.shape(self.prediction_errors)[0] > 1:
+            self.Sigma = map_variance(self.prediction_errors, self.var_df0, self.var_scale0)
+
     def update(self, X, Xp, update_estimate=True):
         if X.ndim > 1:
             X = X[-1, :]  # only consider last example
@@ -527,9 +572,8 @@ class RecurentLinearEvent(LinearEvent):
         x_train_0, xp_train_0 = self.training_pairs[-1]
         xp_hat = self.model.predict(x_train_0)
         self.prediction_errors = np.concatenate([self.prediction_errors, xp_train_0 - xp_hat], axis=0)
-        if np.shape(self.prediction_errors)[0] > 1:
-            self.Sigma = map_variance(self.prediction_errors, self.var_df0, self.var_scale0)
-
+        self._update_variance()
+ 
 
 class RecurrentEvent(RecurentLinearEvent):
 
@@ -564,7 +608,6 @@ class RecurrentEvent(RecurentLinearEvent):
         self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer,
                   kernel_initializer=self.kernel_initializer))
         self.model.compile(**self.compile_opts)
-
 
 
 class GRUEvent(RecurentLinearEvent):
@@ -603,27 +646,51 @@ class GRUEvent(RecurentLinearEvent):
         self.model.compile(**self.compile_opts)
 
 
-class GRUEvent_scaled(GRUEvent):
+class GRUEvent_normed(RecurentLinearEvent):
 
-    def log_likelihood_f0(self, Xp):
+    def __init__(self, d, var_df0, var_scale0, t=3, n_hidden=None, optimizer=None,
+                 n_epochs=10, dropout=0.50, l2_regularization=0.00, batch_size=32,
+                 kernel_initializer='glorot_uniform', init_model=False, prior_log_prob=0.0, reset_weights=False,
+                 batch_update=True, optimizer_kwargs=None):
 
-        if not self.f0_is_trained:
-            return self.prior_probability
+        RecurentLinearEvent.__init__(self, d, var_df0, var_scale0, t=t, optimizer=optimizer, n_epochs=n_epochs,
+                                     l2_regularization=l2_regularization, batch_size=batch_size,
+                                     kernel_initializer=kernel_initializer, init_model=False,
+                                     prior_log_prob=prior_log_prob, reset_weights=reset_weights,
+                                     batch_update=batch_update, optimizer_kwargs=optimizer_kwargs)
 
-        # predict the initial point
-        Xp_hat = self.predict_f0()
+        if n_hidden is None:
+            self.n_hidden = d
+        else:
+            self.n_hidden = n_hidden
+        self.dropout = dropout
 
-        # return the probability
-        # this is now the geometric mean of each feature's likelihood
-        return fast_mvnorm_diagonal_logprob(Xp.reshape(-1) - Xp_hat.reshape(-1), self.Sigma ** 0.5) / self.d
+        if init_model:
+            self.init_model()
 
-    def log_likelihood_next(self, X, Xp):
-        # this is now the geometric mean of each feature's likelihood
-        return super(GRUEvent_scaled, self).log_likelihood_next(X, Xp) / self.d
+    def _compile_model(self):
+        self.model = Sequential()
+        # input_shape[0] = timesteps; we pass the last self.t examples for train the hidden layer
+        # input_shape[1] = input_dim; each example is a self.d-dimensional vector
+        self.model.add(GRU(self.n_hidden, input_shape=(self.t, self.d),
+                                 kernel_regularizer=self.kernel_regularizer,
+                                 kernel_initializer=self.kernel_initializer))
+        self.model.add(LeakyReLU(alpha=0.3))
+        self.model.add(Dropout(self.dropout))
+        self.model.add(Dense(self.d, activation=None, kernel_regularizer=self.kernel_regularizer,
+                  kernel_initializer=self.kernel_initializer))
+        self.model.add(Lambda(lambda x: K.l2_normalize(x, axis=-1)))  
+        self.model.compile(**self.compile_opts)
 
-    def log_likelihood_sequence(self, X, Xp):
-        # this is now the geometric mean of each feature's likelihood
-        return super(GRUEvent_scaled, self).log_likelihood_sequence(X, Xp) / self.d
+
+
+class GRUEvent_spherical_noise(GRUEvent):
+
+    def _update_variance(self):
+        if np.shape(self.prediction_errors)[0] > 1:
+            var = map_variance(self.prediction_errors.reshape(-1), self.var_df0, self.var_scale0)
+            self.Sigma = var * np.ones(self.d)
+
 
 
 class LSTMEvent(RecurentLinearEvent):

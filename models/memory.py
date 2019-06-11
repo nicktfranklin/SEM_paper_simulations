@@ -52,6 +52,8 @@ def reconstruction_accuracy(y_samples, y_mem):
 
     :return:    item_accuracy, list of probabilities each item in original memory 
                 is in the final reconstruction
+
+    # checked this function on 5/20/19, this function is correct if unintuitive
     """
 
 
@@ -61,7 +63,11 @@ def reconstruction_accuracy(y_samples, y_mem):
     for y_sample in y_samples:
 
         def item_acc(t):
-            return np.float(any([all(yt[0] == y_mem[t][0]) for yt in y_sample if yt != None]))
+            # loop through all of the items in the reconstruction trace, and compare them to 
+            # item t in the corrupted trace.  Return 1.0 if there is a match, zero otherwise
+            return np.float(any(
+                [np.array_equal(yt_samp[0], y_mem[t][0]) for yt_samp in y_sample if yt_samp != None]
+                ))
 
         # evaluate the accuracy for all of the items in the set
         acc.append([item_acc(t) for t in range(n_orig)])
@@ -75,7 +81,7 @@ def evaluate_seg(e_samples, e_true):
         acc.append(np.mean(np.array(e) == e_true))
     return np.mean(acc)
     
-def create_corrupted_trace(x, e, tau, epsilon_e, b):
+def create_corrupted_trace(x, e, tau, epsilon_e, b, return_random_draws_of_p_e=False):
     """
     create a corrupted memory trace from feature vectors and event labels
 
@@ -93,12 +99,19 @@ def create_corrupted_trace(x, e, tau, epsilon_e, b):
     # create the corrupted memory trace
     y_mem = list()  # these are list, not sets, for hashability
 
+    # pre-draw the uniform random numbers to determine the event-label corruption noise so that 
+    # we can return them as needed.
+    e_noise_draws = [np.random.uniform(0, 1) for _ in range(n)]
+
     for t in range(n):
         x_mem = x[t, :] + np.random.normal(scale=tau ** 0.5, size=d) # note, built in function uses stdev, not variance 
-        e_mem = [None, e[t]][np.random.rand() < epsilon_e]
+        e_mem = [None, e[t]][e_noise_draws[t] < epsilon_e]
         t_mem = t + np.random.randint(-b, b + 1)
         y_mem.append([x_mem, e_mem, t_mem])
-        
+    
+    if return_random_draws_of_p_e:
+        return y_mem, e_noise_draws
+
     return y_mem
 
 def init_y_sample(y_mem, b, epsilon):
@@ -329,6 +342,10 @@ def gibbs_memory_sampler(y_mem, sem_model, memory_alpha, memory_lambda, memory_e
     :return: y_samples, e_samples, x_samples - Gibbs samples
     """
 
+    event_models =  {
+        k: v for k, v in sem_model.event_models.iteritems() if v.f_is_trained
+    }
+
     d = np.shape(y_mem[0][0])[0]
     n = len(y_mem)
 
@@ -339,7 +356,7 @@ def gibbs_memory_sampler(y_mem, sem_model, memory_alpha, memory_lambda, memory_e
 
     y_sample = init_y_sample(y_mem, b, memory_epsilon)
     x_sample = init_x_sample_cond_y(y_sample, n, d, tau)
-    e_sample = sample_e_given_x_y(x_sample, y_sample, sem_model.event_models, memory_alpha, memory_lambda)
+    e_sample = sample_e_given_x_y(x_sample, y_sample, event_models, memory_alpha, memory_lambda)
 
     # loop through the other events in the list
     if progress_bar:
@@ -352,10 +369,10 @@ def gibbs_memory_sampler(y_mem, sem_model, memory_alpha, memory_lambda, memory_e
     for ii in my_it(range(n_burnin + n_samples)):
 
         # sample the memory features
-        x_sample = sample_x_given_y_e(x_sample, y_sample, e_sample, sem_model.event_models, tau)
+        x_sample = sample_x_given_y_e(x_sample, y_sample, e_sample, event_models, tau)
 
         # sample the event models
-        e_sample = sample_e_given_x_y(x_sample, y_sample, sem_model.event_models, memory_alpha, memory_lambda)
+        e_sample = sample_e_given_x_y(x_sample, y_sample, event_models, memory_alpha, memory_lambda)
 
         # sample the memory traces
         y_sample = sample_y_given_x_e(y_mem, x_sample, e_sample, b, tau, memory_epsilon)
@@ -367,34 +384,34 @@ def gibbs_memory_sampler(y_mem, sem_model, memory_alpha, memory_lambda, memory_e
 
     return y_samples, e_samples, x_samples
 
+## there appears to be something wrong with this function! do not use for now
+# def multichain_gibbs(y_mem, sem_model, memory_alpha, memory_lambda, memory_epsilon, b, tau, n_chains=2,
+#                          n_samples=250, n_burnin=50, progress_bar=True, leave_progress_bar=True):
 
-def multichain_gibbs(y_mem, sem_model, memory_alpha, memory_lambda, memory_epsilon, b, tau, n_chains=2,
-                         n_samples=250, n_burnin=50, progress_bar=True, leave_progress_bar=True):
+#     """
 
-    """
+#     :param y_mem: list of 3-tuples (x_mem, e_mem, t_mem), corrupted memory trace
+#     :param sem_mdoel: trained SEM instance
+#     :param memory_alpha: SEM alpha parameter to use in reconstruction
+#     :param memory_labmda: SEM lmbda parameter to use in reconstruction
+#     :param memory_epsilon: (float) parameter controlling propensity to include null trace in reconstruction
+#     :param b: (int) time index corruption noise
+#     :param tau: (float, greater than zero) feature vector corruption noise
+#     :param n_burnin: (int, default 100) number of Gibbs sampling itterations to burn in
+#     :param n_samples: (int, default 250) number of Gibbs sampling itterations to collect
+#     :param progress_bar: (bool) use progress bar for sampling?
+#     :param leave_progress_bar: (bool, default=True) leave the progress bar at the end? 
 
-    :param y_mem: list of 3-tuples (x_mem, e_mem, t_mem), corrupted memory trace
-    :param sem_mdoel: trained SEM instance
-    :param memory_alpha: SEM alpha parameter to use in reconstruction
-    :param memory_labmda: SEM lmbda parameter to use in reconstruction
-    :param memory_epsilon: (float) parameter controlling propensity to include null trace in reconstruction
-    :param b: (int) time index corruption noise
-    :param tau: (float, greater than zero) feature vector corruption noise
-    :param n_burnin: (int, default 100) number of Gibbs sampling itterations to burn in
-    :param n_samples: (int, default 250) number of Gibbs sampling itterations to collect
-    :param progress_bar: (bool) use progress bar for sampling?
-    :param leave_progress_bar: (bool, default=True) leave the progress bar at the end? 
+#     :return: y_samples, e_samples, x_samples - Gibbs samples
+#     """
 
-    :return: y_samples, e_samples, x_samples - Gibbs samples
-    """
-
-    y_samples, e_samples, x_samples = [], [], []
-    for _ in range(n_chains):
-        _y0, _e0, _x0 = gibbs_memory_sampler(
-            y_mem, sem_model, memory_alpha, memory_lambda, memory_epsilon, 
-            b, tau, n_samples, progress_bar, False, leave_progress_bar
-            )
-        y_samples += _y0
-        e_samples += _e0
-        x_samples += _x0
-    return y_samples, e_samples, x_samples
+#     y_samples, e_samples, x_samples = [], [], []
+#     for _ in range(n_chains):
+#         _y0, _e0, _x0 = gibbs_memory_sampler(
+#             y_mem, sem_model, memory_alpha, memory_lambda, memory_epsilon, 
+#             b, tau, n_samples, progress_bar, False, leave_progress_bar
+#             )
+#         y_samples += _y0
+#         e_samples += _e0
+#         x_samples += _x0
+#     return y_samples, e_samples, x_samples

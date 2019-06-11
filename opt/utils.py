@@ -25,6 +25,8 @@ def generate_random_events(n_events, data_file=None):
     motion_data = pd.read_pickle(data_file)
     n_patterns = len(set(motion_data.EventNumber))
 
+    z = np.mean(np.linalg.norm(motion_data.values[:, :-1], axis=1))
+
     X = []
     y = []
     p_prev = -1
@@ -35,7 +37,7 @@ def generate_random_events(n_events, data_file=None):
                 p_prev = p
                 break
         e = motion_data.loc[motion_data.EventNumber == p, :].values[:, :-1]
-        X.append(e)
+        X.append(e / z)
         y.append([p] * e.shape[0])
     return np.concatenate(X), np.concatenate(y)
 
