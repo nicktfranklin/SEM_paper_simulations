@@ -1,6 +1,19 @@
 import numpy as np
 from sklearn.preprocessing import normalize
 
+
+def embed_gaussian(d, n=1):
+    """
+    returns n normal vectors with variance = 1/n, inline with Plate's caluclations
+
+    :param d: (int), dimensions of the embedding
+    :param n: (int, default=1), number of embeddings to return
+
+    :return: d-length np.array
+    """
+    return np.random.normal(loc=0., scale=1./np.sqrt(d), size=(n, d))
+
+
 def conv_circ(signal, kernal, n=None):
     '''
     Parameters
@@ -28,7 +41,7 @@ def plate_formula(n, k, err):
     formula:
       D = 3.16(K-0.25)ln(N/err^3)
     where D is the number of dimensions, K is the maximum number of terms
-    to be combined, N is the number of atomic values in the langauge, and
+    to be combined, N is the number of atomic values in the language, and
     err is the probability of error.
 
     USAGE: D = plate_formula(n, k, err)
@@ -71,7 +84,7 @@ def embed(n, d, distr='spikeslab_gaussian', param=None):
 
 
 def encode(a, b):
-    return normalize(conv_circ(a, b, np.size(a)))
+    return conv_circ(a, b, np.size(a))
 
 
 def embed_onehot(n, d):
@@ -83,4 +96,4 @@ def embed_onehot(n, d):
 
 def decode(a, b):
     c = np.real(np.fft.ifft(np.fft.fft(a, np.size(a)) * np.conj(np.fft.fft(b, np.size(a)))))
-    return normalize(c / np.size(a))
+    return c / np.size(a)
