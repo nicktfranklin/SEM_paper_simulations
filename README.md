@@ -1,6 +1,6 @@
 # EventSegmentation
 
-Accompanying code for the manuscript "Structured event memory: a neuro-symbolic model of event cognition", Franklin, Norman, Ranganath, Zacks, and Gershman 2019, BioRxiv, [https://doi.org/10.1101/541607][https://doi.org/10.1101/541607]
+Accompanying code for the manuscript "Structured event memory: a neuro-symbolic model of event cognition", Franklin, Norman, Ranganath, Zacks, and Gershman 2019, BioRxiv, [https://doi.org/10.1101/541607](https://doi.org/10.1101/541607)
 
 Contains the SEM model,  a few basic demonstrations, and the all of the simulations in the paper.
 
